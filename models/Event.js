@@ -28,17 +28,7 @@ const eventSchema = new mongoose.Schema({
   },
   endDate: {
     type: Date,
-    required: [true, 'End date is required'],
-    validate: {
-      validator: function(value) {
-        // Skip validation during updates if startDate is not being modified
-        if (this.isModified && !this.isModified('startDate') && !this.isNew) {
-          return true;
-        }
-        return value > this.startDate;
-      },
-      message: 'End date must be after start date'
-    }
+    required: [true, 'End date is required']
   },
   location: {
     address: {
@@ -105,6 +95,19 @@ const eventSchema = new mongoose.Schema({
       type: mongoose.Schema.Types.ObjectId,
       ref: 'Service',
       required: true
+    },
+    // Selected package ID from the service's packages array
+    selectedPackageId: {
+      type: mongoose.Schema.Types.ObjectId,
+      required: false
+    },
+    // Store package details snapshot at time of selection
+    packageDetails: {
+      name: String,
+      description: String,
+      price: Number,
+      features: [String],
+      duration: Number
     },
     status: {
       type: String,
@@ -418,7 +421,7 @@ eventSchema.statics.findByLocation = function(city) {
   }).sort({ startDate: 1 });
 };
 
-// Enhanced method to add supplier with detailed information
+// Enhanced method to add supplier with detailed information including package
 eventSchema.methods.addSupplierWithDetails = function(supplierId, serviceId, details = {}) {
   const existingSupplier = this.suppliers.find(
     s => s.supplierId.toString() === supplierId.toString() && 
@@ -429,7 +432,7 @@ eventSchema.methods.addSupplierWithDetails = function(supplierId, serviceId, det
     throw new Error('Supplier already added for this service');
   }
   
-  this.suppliers.push({
+  const supplierData = {
     supplierId,
     serviceId,
     status: 'pending',
@@ -437,7 +440,18 @@ eventSchema.methods.addSupplierWithDetails = function(supplierId, serviceId, det
     notes: details.notes,
     priority: details.priority || 'medium',
     requestedAt: new Date()
-  });
+  };
+  
+  // Add package information if provided
+  if (details.selectedPackageId) {
+    supplierData.selectedPackageId = details.selectedPackageId;
+  }
+  
+  if (details.packageDetails) {
+    supplierData.packageDetails = details.packageDetails;
+  }
+  
+  this.suppliers.push(supplierData);
   
   return this.save();
 };

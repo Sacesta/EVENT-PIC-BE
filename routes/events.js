@@ -12,7 +12,7 @@ const router = express.Router();
 const createEventSchema = Joi.object({
   name: Joi.string().min(2).max(200).required(),
   description: Joi.string().min(10).max(2000).optional(),
-  image: Joi.string().optional(),
+  image: Joi.any().optional(),
   startDate: Joi.date().greater('now').required(),
   endDate: Joi.date().greater(Joi.ref('startDate')).required(),
   location: Joi.object({
@@ -44,7 +44,7 @@ const createEventSchema = Joi.object({
        'photography', 'videography', 'catering', 'music', 
       'decoration', 'transportation', 'security', 'lighting', 'sound', 'furniture', 'tents', 'other'
   )).optional(),
-  // Enhanced suppliers array to handle multiple services per supplier
+  // Enhanced suppliers array to handle multiple services per supplier with package selection
   // Supports both nested (new) and flat (legacy) structures
   suppliers: Joi.array().items(
     Joi.alternatives().try(
@@ -53,6 +53,14 @@ const createEventSchema = Joi.object({
         supplierId: Joi.string().required(),
         services: Joi.array().items(Joi.object({
           serviceId: Joi.string().required(),
+          selectedPackageId: Joi.string().optional(),
+          packageDetails: Joi.object({
+            name: Joi.string().optional(),
+            description: Joi.string().optional(),
+            price: Joi.number().min(0).optional(),
+            features: Joi.array().items(Joi.string()).optional(),
+            duration: Joi.number().optional()
+          }).optional(),
           requestedPrice: Joi.number().min(0).optional(),
           notes: Joi.string().max(500).optional(),
           priority: Joi.string().valid('low', 'medium', 'high').default('medium')
@@ -62,6 +70,14 @@ const createEventSchema = Joi.object({
       Joi.object({
         supplierId: Joi.string().required(),
         serviceId: Joi.string().required(),
+        selectedPackageId: Joi.string().optional(),
+        packageDetails: Joi.object({
+          name: Joi.string().optional(),
+          description: Joi.string().optional(),
+          price: Joi.number().min(0).optional(),
+          features: Joi.array().items(Joi.string()).optional(),
+          duration: Joi.number().optional()
+        }).optional(),
         requestedPrice: Joi.number().min(0).optional(),
         notes: Joi.string().max(500).optional(),
         priority: Joi.string().valid('low', 'medium', 'high').default('medium')
@@ -91,7 +107,7 @@ const createEventSchema = Joi.object({
 const updateEventSchema = Joi.object({
   name: Joi.string().min(2).max(200).optional(),
   description: Joi.string().min(10).max(2000).optional(),
-  image: Joi.string().optional(),
+  image: Joi.any().optional(),
   startDate: Joi.date().optional(),
   endDate: Joi.date().optional(),
   location: Joi.object({
@@ -122,7 +138,8 @@ const updateEventSchema = Joi.object({
        'photography', 'videography', 'catering', 'music', 
       'decoration', 'transportation', 'security', 'lighting' , 'sound', 'furniture', 'tents', 'other'
   )).optional(),
-  // Supports both nested (new) and flat (legacy) structures
+  // Supports both nested (new) and flat (legacy) structures with package selection
+  // Also handles populated objects from frontend
   suppliers: Joi.array().items(
     Joi.alternatives().try(
       // New nested structure: suppliers[0].services[0].serviceId
@@ -130,6 +147,14 @@ const updateEventSchema = Joi.object({
         supplierId: Joi.string().required(),
         services: Joi.array().items(Joi.object({
           serviceId: Joi.string().required(),
+          selectedPackageId: Joi.string().optional(),
+          packageDetails: Joi.object({
+            name: Joi.string().optional(),
+            description: Joi.string().optional(),
+            price: Joi.number().min(0).optional(),
+            features: Joi.array().items(Joi.string()).optional(),
+            duration: Joi.number().optional()
+          }).optional(),
           requestedPrice: Joi.number().min(0).optional(),
           notes: Joi.string().max(500).optional(),
           priority: Joi.string().valid('low', 'medium', 'high').default('medium')
@@ -139,10 +164,20 @@ const updateEventSchema = Joi.object({
       Joi.object({
         supplierId: Joi.string().required(),
         serviceId: Joi.string().required(),
+        selectedPackageId: Joi.string().optional(),
+        packageDetails: Joi.object({
+          name: Joi.string().optional(),
+          description: Joi.string().optional(),
+          price: Joi.number().min(0).optional(),
+          features: Joi.array().items(Joi.string()).optional(),
+          duration: Joi.number().optional()
+        }).optional(),
         requestedPrice: Joi.number().min(0).optional(),
         notes: Joi.string().max(500).optional(),
         priority: Joi.string().valid('low', 'medium', 'high').default('medium')
-      })
+      }),
+      // Populated structure from frontend (ignore these - they're already in DB)
+      Joi.object().unknown(true)
     )
   ).optional(),
   isPublic: Joi.boolean().optional(),
@@ -162,13 +197,21 @@ const updateEventSchema = Joi.object({
     allocated: Joi.object().pattern(Joi.string(), Joi.number().min(0)).optional(),
     spent: Joi.number().min(0).optional()
   }).optional()
-});
+}).unknown(true);
 
 const addSuppliersSchema = Joi.object({
   suppliers: Joi.array().items(Joi.object({
     supplierId: Joi.string().required(),
     services: Joi.array().items(Joi.object({
       serviceId: Joi.string().required(),
+      selectedPackageId: Joi.string().optional(),
+      packageDetails: Joi.object({
+        name: Joi.string().optional(),
+        description: Joi.string().optional(),
+        price: Joi.number().min(0).optional(),
+        features: Joi.array().items(Joi.string()).optional(),
+        duration: Joi.number().optional()
+      }).optional(),
       requestedPrice: Joi.number().min(0).optional(),
       notes: Joi.string().max(500).optional(),
       priority: Joi.string().valid('low', 'medium', 'high').default('medium')
@@ -251,16 +294,29 @@ router.post('/', protect, authorize('producer'), async (req, res) => {
       }
     }
 
-    // Transform suppliers data for the schema
+    // Transform suppliers data for the schema with package information
     const transformedSuppliers = value.suppliers ? value.suppliers.flatMap(supplier => 
-      supplier.services.map(service => ({
-        supplierId: supplier.supplierId,
-        serviceId: service.serviceId,
-        requestedPrice: service.requestedPrice,
-        notes: service.notes,
-        priority: service.priority,
-        status: 'pending'
-      }))
+      supplier.services.map(service => {
+        const supplierData = {
+          supplierId: supplier.supplierId,
+          serviceId: service.serviceId,
+          requestedPrice: service.requestedPrice,
+          notes: service.notes,
+          priority: service.priority,
+          status: 'pending'
+        };
+        
+        // Only add package info if it's actually provided
+        if (service.selectedPackageId) {
+          supplierData.selectedPackageId = service.selectedPackageId;
+        }
+        
+        if (service.packageDetails && Object.keys(service.packageDetails).length > 0) {
+          supplierData.packageDetails = service.packageDetails;
+        }
+        
+        return supplierData;
+      })
     ) : [];
 
     // Create event
@@ -282,25 +338,36 @@ router.post('/', protect, authorize('producer'), async (req, res) => {
     delete eventData.suppliers; // Remove the transformed suppliers temporarily
     const event = await Event.create(eventData);
 
-    // Add suppliers using the model method
+    // Add suppliers using the model method with package information
     for (const supplier of transformedSuppliers) {
+      const details = {
+        requestedPrice: supplier.requestedPrice,
+        notes: supplier.notes,
+        priority: supplier.priority
+      };
+      
+      // Only add package info if it exists
+      if (supplier.selectedPackageId) {
+        details.selectedPackageId = supplier.selectedPackageId;
+      }
+      
+      if (supplier.packageDetails) {
+        details.packageDetails = supplier.packageDetails;
+      }
+      
       await event.addSupplierWithDetails(
         supplier.supplierId, 
         supplier.serviceId, 
-        {
-          requestedPrice: supplier.requestedPrice,
-          notes: supplier.notes,
-          priority: supplier.priority
-        }
+        details
       );
     }
 
 
-    // Populate and return the created event
+    // Populate and return the created event with full details
     const populatedEvent = await Event.findById(event._id)
-      .populate('producerId', 'name companyName profileImage')
-      .populate('suppliers.supplierId', 'name companyName profileImage supplierDetails')
-      .populate('suppliers.serviceId', 'name description price category');
+      .populate('producerId', 'name companyName profileImage email phone')
+      .populate('suppliers.supplierId', 'name companyName profileImage email phone supplierDetails')
+      .populate('suppliers.serviceId', 'title description price category subcategories tags availability location experience rating portfolio packages featured');
 
     res.status(201).json({
       success: true,
@@ -372,7 +439,7 @@ router.post('/:id/suppliers', protect, async (req, res) => {
       });
     }
 
-    // Add suppliers and services
+    // Add suppliers and services with package information
     const addedSuppliers = [];
     const errors = [];
 
@@ -385,12 +452,15 @@ router.post('/:id/suppliers', protect, async (req, res) => {
             {
               requestedPrice: serviceData.requestedPrice,
               notes: serviceData.notes,
-              priority: serviceData.priority
+              priority: serviceData.priority,
+              selectedPackageId: serviceData.selectedPackageId,
+              packageDetails: serviceData.packageDetails
             }
           );
           addedSuppliers.push({
             supplierId: supplierData.supplierId,
-            serviceId: serviceData.serviceId
+            serviceId: serviceData.serviceId,
+            selectedPackageId: serviceData.selectedPackageId
           });
         } catch (err) {
           errors.push({
@@ -403,8 +473,8 @@ router.post('/:id/suppliers', protect, async (req, res) => {
     }
 
     const updatedEvent = await Event.findById(req.params.id)
-      .populate('suppliers.supplierId', 'name companyName profileImage')
-      .populate('suppliers.serviceId', 'name description price category');
+      .populate('suppliers.supplierId', 'name companyName profileImage email phone supplierDetails')
+      .populate('suppliers.serviceId', 'title description price category subcategories tags availability location experience rating portfolio packages featured');
 
     res.json({
       success: true,
@@ -480,8 +550,8 @@ router.put('/:id/suppliers/bulk-status', protect, async (req, res) => {
     }
 
     const updatedEvent = await Event.findById(req.params.id)
-      .populate('suppliers.supplierId', 'name companyName profileImage')
-      .populate('suppliers.serviceId', 'name description price category');
+      .populate('suppliers.supplierId', 'name companyName profileImage email phone supplierDetails')
+      .populate('suppliers.serviceId', 'title description price category subcategories tags availability location experience rating portfolio packages featured');
 
     res.json({
       success: true,
@@ -599,11 +669,11 @@ router.put('/:eventId/supplier-status', protect, async (req, res) => {
     // Save the event
     await event.save();
 
-    // Populate and return the updated event
+    // Populate and return the updated event with full details
     const updatedEvent = await Event.findById(req.params.eventId)
-      .populate('producerId', 'name companyName profileImage')
-      .populate('suppliers.supplierId', 'name companyName profileImage supplierDetails')
-      .populate('suppliers.serviceId', 'name description price category');
+      .populate('producerId', 'name companyName profileImage email phone')
+      .populate('suppliers.supplierId', 'name companyName profileImage email phone supplierDetails')
+      .populate('suppliers.serviceId', 'title description price category subcategories tags availability location experience rating portfolio packages featured');
 
     res.json({
       success: true,
@@ -630,12 +700,12 @@ router.get('/:id/suppliers', async (req, res) => {
     const event = await Event.findById(req.params.id)
       .populate({
         path: 'suppliers.supplierId',
-        select: 'name companyName profileImage supplierDetails',
+        select: 'name companyName profileImage email phone supplierDetails',
         match: { isActive: true }
       })
       .populate({
         path: 'suppliers.serviceId',
-        select: 'name description price category images',
+        select: 'title description price category subcategories tags availability location experience rating portfolio packages featured',
         match: category ? { category } : {}
       });
 
@@ -828,17 +898,17 @@ router.get('/my-events', protect, authorize('producer'), async (req, res) => {
     const sort = {};
     sort[sortBy] = sortOrder === 'desc' ? -1 : 1;
 
-    // Execute query with full population
+    // Execute query with full population including packages
     const events = await Event.find(filter)
       .populate('producerId', 'name companyName profileImage email phone')
       .populate({
         path: 'suppliers.supplierId',
-        select: 'name companyName profileImage supplierDetails email phone',
+        select: 'name companyName profileImage email phone supplierDetails',
         match: { isActive: true }
       })
       .populate({
         path: 'suppliers.serviceId',
-        select: 'name description price category images availability location'
+        select: 'title description price category subcategories tags availability location experience rating portfolio packages featured'
       })
       .populate('tickets')
       .sort(sort)
@@ -1087,13 +1157,17 @@ router.get('/', async (req, res) => {
       currentPage = 1;
     }
 
-    // Execute query with pagination
+    // Execute query with pagination and full details
     const events = await Event.find(filter)
-      .populate('producerId', 'name companyName profileImage')
+      .populate('producerId', 'name companyName profileImage email phone')
       .populate({
         path: 'suppliers.supplierId',
-        select: 'name companyName profileImage',
+        select: 'name companyName profileImage email phone supplierDetails',
         match: { isActive: true }
+      })
+      .populate({
+        path: 'suppliers.serviceId',
+        select: 'title description price category subcategories tags availability location experience rating portfolio packages featured'
       })
       .sort({ startDate: 1, featured: -1 })
       .limit(limit * 1)
@@ -1132,15 +1206,15 @@ router.get('/', async (req, res) => {
 router.get('/:id', async (req, res) => {
   try {
     const event = await Event.findById(req.params.id)
-      .populate('producerId', 'name companyName profileImage')
+      .populate('producerId', 'name companyName profileImage email phone')
       .populate({
         path: 'suppliers.supplierId',
-        select: 'name companyName profileImage supplierDetails',
+        select: 'name companyName profileImage email phone supplierDetails',
         match: { isActive: true }
       })
       .populate({
         path: 'suppliers.serviceId',
-        select: 'name description price category images availability'
+        select: 'title description price category subcategories tags availability location experience rating portfolio packages featured'
       })
       .populate('tickets');
 
@@ -1262,15 +1336,15 @@ router.get('/supplier/:supplierId', protect, async (req, res) => {
 
     console.log("MongoDB filter:", JSON.stringify(filter, null, 2));
 
-    // Find events with filters
+    // Find events with filters and full details
     let query = Event.find(filter)
-      .populate('producerId', 'name companyName profileImage')
+      .populate('producerId', 'name companyName profileImage email phone')
       .populate({
         path: 'suppliers.supplierId',
-        select: 'name companyName profileImage',
+        select: 'name companyName profileImage email phone supplierDetails',
         match: { _id: supplierId }
       })
-      .populate('suppliers.serviceId', 'name description price category')
+      .populate('suppliers.serviceId', 'title description price category subcategories tags availability location experience rating portfolio packages featured')
       .sort({ [sortBy]: 1 })
       .limit(limit * 1)
       .skip((page - 1) * limit);
@@ -1388,17 +1462,21 @@ router.get('/supplier/:supplierId', protect, async (req, res) => {
 router.put('/:id', protect, authorize('producer'), async (req, res) => {
   try {
     // Validate input
-    console.log("req.body----?", req.body);
+    console.log("=== UPDATE EVENT DEBUG ===");
+    console.log("Request body:", JSON.stringify(req.body, null, 2));
+    
     const { error, value } = updateEventSchema.validate(req.body);
 
-    console.log("error : ", error);
     if (error) {
+      console.log("Validation error:", error);
       return res.status(400).json({
         success: false,
         message: error.message,
         errors: error.details.map(detail => detail.message)
       });
     }
+
+    console.log("Validated value:", JSON.stringify(value, null, 2));
 
     // Find the event
     const event = await Event.findById(req.params.id);
@@ -1408,6 +1486,8 @@ router.put('/:id', protect, authorize('producer'), async (req, res) => {
         message: 'Event not found'
       });
     }
+
+    console.log("Found event:", event._id);
 
     // Check if the current user is the producer who created this event
     if (event.producerId.toString() !== req.user._id.toString()) {
@@ -1419,8 +1499,12 @@ router.put('/:id', protect, authorize('producer'), async (req, res) => {
 
     // Validate suppliers and services if being updated (same logic as create endpoint)
     if (value.suppliers && value.suppliers.length > 0) {
+      console.log("Validating suppliers...");
       const supplierIds = value.suppliers.map(s => s.supplierId);
       const serviceIds = value.suppliers.flatMap(s => s.services ? s.services.map(srv => srv.serviceId) : [s.serviceId]);
+
+      console.log("Supplier IDs:", supplierIds);
+      console.log("Service IDs:", serviceIds);
 
       // Check if all suppliers exist and are verified
       const suppliers = await User.find({
@@ -1429,6 +1513,8 @@ router.put('/:id', protect, authorize('producer'), async (req, res) => {
         isVerified: true,
         isActive: true
       });
+
+      console.log(`Found ${suppliers.length} suppliers out of ${supplierIds.length}`);
 
       if (suppliers.length !== supplierIds.length) {
         return res.status(400).json({
@@ -1439,6 +1525,8 @@ router.put('/:id', protect, authorize('producer'), async (req, res) => {
 
       // Check if all services exist and belong to the respective suppliers
       const services = await Service.find({ _id: { $in: serviceIds } });
+      console.log(`Found ${services.length} services out of ${serviceIds.length}`);
+
       if (services.length !== serviceIds.length) {
         return res.status(400).json({
           success: false,
@@ -1462,6 +1550,7 @@ router.put('/:id', protect, authorize('producer'), async (req, res) => {
         );
         
         if (invalidServices.length > 0) {
+          console.log("Invalid services found:", invalidServices);
           return res.status(400).json({
             success: false,
             message: `Services ${invalidServices.join(', ')} do not belong to supplier ${supplierData.supplierId}`
@@ -1470,20 +1559,28 @@ router.put('/:id', protect, authorize('producer'), async (req, res) => {
       }
     }
 
-    // Transform suppliers data for the schema (same as create endpoint)
+    // Transform suppliers data for the schema with package information (same as create endpoint)
+    console.log("Transforming suppliers data...");
     const transformedSuppliers = value.suppliers ? value.suppliers.flatMap(supplier => 
       supplier.services ? 
-        supplier.services.map(service => ({
-          supplierId: supplier.supplierId,
-          serviceId: service.serviceId,
-          requestedPrice: service.requestedPrice,
-          notes: service.notes,
-          priority: service.priority,
-          status: 'pending'
-        })) :
+        supplier.services.map(service => {
+          console.log("Processing service:", JSON.stringify(service, null, 2));
+          return {
+            supplierId: supplier.supplierId,
+            serviceId: service.serviceId,
+            selectedPackageId: service.selectedPackageId,
+            packageDetails: service.packageDetails,
+            requestedPrice: service.requestedPrice,
+            notes: service.notes,
+            priority: service.priority,
+            status: 'pending'
+          };
+        }) :
         [{
           supplierId: supplier.supplierId,
           serviceId: supplier.serviceId,
+          selectedPackageId: supplier.selectedPackageId,
+          packageDetails: supplier.packageDetails,
           requestedPrice: supplier.requestedPrice,
           notes: supplier.notes,
           priority: supplier.priority,
@@ -1491,9 +1588,13 @@ router.put('/:id', protect, authorize('producer'), async (req, res) => {
         }]
     ) : [];
 
+    console.log("Transformed suppliers:", JSON.stringify(transformedSuppliers, null, 2));
+
     // Prepare update data (exclude suppliers for now)
     const updateData = { ...value };
     delete updateData.suppliers;
+
+    console.log("Update data (without suppliers):", JSON.stringify(updateData, null, 2));
 
     // If ticketInfo is not provided, set default values to satisfy model requirements
     if (!updateData.ticketInfo && value.ticketInfo === undefined) {
@@ -1508,49 +1609,80 @@ router.put('/:id', protect, authorize('producer'), async (req, res) => {
     }
 
     // Update the event basic fields
+    console.log("Updating event basic fields...");
     const updatedEvent = await Event.findByIdAndUpdate(
       req.params.id,
       updateData,
       { new: true, runValidators: true }
     );
 
-    // Handle suppliers update if provided (same logic as create endpoint)
-    if (transformedSuppliers.length > 0) {
-      // Clear existing suppliers and add new ones
-      updatedEvent.suppliers = [];
-      await updatedEvent.save();
+    console.log("Event basic fields updated successfully");
 
-      // Add suppliers using the model method
+    // Handle suppliers update if provided
+    if (transformedSuppliers.length > 0) {
+      console.log(`Adding ${transformedSuppliers.length} new suppliers...`);
+      console.log("Current suppliers count:", updatedEvent.suppliers.length);
+      
+      // DON'T clear existing suppliers - just add new ones
+      // This preserves existing supplier-service combinations
+      
+      // Add new suppliers using the model method with package information
       for (const supplier of transformedSuppliers) {
         try {
+          console.log(`Adding supplier ${supplier.supplierId} with service ${supplier.serviceId}`);
+          console.log("Supplier details:", JSON.stringify({
+            requestedPrice: supplier.requestedPrice,
+            notes: supplier.notes,
+            priority: supplier.priority,
+            selectedPackageId: supplier.selectedPackageId,
+            packageDetails: supplier.packageDetails
+          }, null, 2));
+          
           await updatedEvent.addSupplierWithDetails(
             supplier.supplierId, 
             supplier.serviceId, 
             {
               requestedPrice: supplier.requestedPrice,
               notes: supplier.notes,
-              priority: supplier.priority
+              priority: supplier.priority,
+              selectedPackageId: supplier.selectedPackageId,
+              packageDetails: supplier.packageDetails
             }
           );
+          console.log(`Successfully added supplier ${supplier.supplierId}`);
         } catch (err) {
-          console.warn(`Failed to add supplier ${supplier.supplierId} with service ${supplier.serviceId}:`, err.message);
+          // If supplier already exists, it's okay - just skip
+          if (err.message.includes('already added')) {
+            console.log(`Supplier ${supplier.supplierId} with service ${supplier.serviceId} already exists, skipping...`);
+          } else {
+            console.error(`Failed to add supplier ${supplier.supplierId} with service ${supplier.serviceId}:`, err.message);
+            console.error("Error stack:", err.stack);
+          }
           // Continue with other suppliers even if one fails
         }
       }
+      
+      console.log("Finished adding suppliers. Total suppliers now:", updatedEvent.suppliers.length);
+    } else {
+      console.log("No new suppliers to add");
     }
 
-    // Populate and return the updated event
+    // Populate and return the updated event with full details
+    console.log("Populating event data...");
     const populatedEvent = await Event.findById(req.params.id)
       .populate('producerId', 'name companyName profileImage email phone')
       .populate({
         path: 'suppliers.supplierId',
-        select: 'name companyName profileImage supplierDetails email phone',
+        select: 'name companyName profileImage email phone supplierDetails',
         match: { isActive: true }
       })
       .populate({
         path: 'suppliers.serviceId',
-        select: 'name description price category images availability location'
+        select: 'title description price category subcategories tags availability location experience rating portfolio packages featured'
       });
+
+    console.log("Final populated event suppliers count:", populatedEvent.suppliers.length);
+    console.log("=== UPDATE EVENT COMPLETE ===");
 
     res.json({
       success: true,
@@ -1560,6 +1692,7 @@ router.put('/:id', protect, authorize('producer'), async (req, res) => {
 
   } catch (error) {
     console.error('Update event error:', error);
+    console.error('Error stack:', error.stack);
     res.status(500).json({
       success: false,
       message: 'Error updating event',
