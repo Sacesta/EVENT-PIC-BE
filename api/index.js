@@ -20,6 +20,7 @@ const adminRoutes = require('../routes/admin');
 const chatRoutes = require('../routes/chats');
 const supplierRegistrationRoutes = require('../routes/supplierRegistration');
 const producerRegistrationRoutes = require('../routes/producerRegistration');
+const attendeeRoutes = require('../routes/attendees');
 
 const { errorHandler } = require('../middleware/errorHandler');
 const { connectDB } = require('../config/database');
@@ -59,6 +60,7 @@ app.use('/api/', limiter);
 
 // CORS configuration - explicit for Vercel
 app.use(cors());
+
 
 // Body parsing middleware
 app.use(express.json({ limit: '10mb' }));
@@ -112,6 +114,7 @@ app.use('/api/admin', adminRoutes);
 app.use('/api/chats', chatRoutes);
 app.use('/api/supplier-registration', supplierRegistrationRoutes);
 app.use('/api/producer-registration', producerRegistrationRoutes);
+app.use('/api/attendees', attendeeRoutes);
 
 // 404 handler
 app.use('*', (req, res) => {

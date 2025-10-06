@@ -1,4 +1,5 @@
 const mongoose = require('mongoose');
+const bcrypt = require('bcryptjs');
 
 const eventSchema = new mongoose.Schema({
   name: {
@@ -6,6 +7,11 @@ const eventSchema = new mongoose.Schema({
     required: [true, 'Event name is required'],
     trim: true,
     maxlength: [200, 'Event name cannot be more than 200 characters']
+  },
+  password: {
+    type: String,
+    select: false, // Don't return password in queries by default
+    minlength: [6, 'Password must be at least 6 characters']
   },
   description: {
     type: String,
@@ -216,6 +222,10 @@ const eventSchema = new mongoose.Schema({
         type: Number,
         min: [0, 'Maximum price cannot be negative']
       }
+    },
+    isFree: {
+      type: Boolean,
+      default: true
     }
   },
   // Budget management
@@ -312,6 +322,11 @@ eventSchema.virtual('duration').get(function() {
   return 0;
 });
 
+// Virtual for isPrivate (opposite of isPublic)
+eventSchema.virtual('isPrivate').get(function() {
+  return !this.isPublic;
+});
+
 // Virtual for remaining tickets
 eventSchema.virtual('remainingTickets').get(function() {
   return this.ticketInfo.availableTickets - this.ticketInfo.soldTickets - this.ticketInfo.reservedTickets;
@@ -370,8 +385,8 @@ eventSchema.virtual('budgetUtilization').get(function() {
   };
 });
 
-// Pre-save middleware to update metadata and analytics
-eventSchema.pre('save', function(next) {
+// Pre-save middleware to hash password and update metadata
+eventSchema.pre('save', async function(next) {
   this.metadata.updatedAt = new Date();
   
   if (this.isModified('status')) {
@@ -389,6 +404,17 @@ eventSchema.pre('save', function(next) {
     this.analytics.totalServicesCost = this.suppliers
       .filter(s => s.status === 'confirmed' && s.finalPrice)
       .reduce((sum, s) => sum + s.finalPrice, 0);
+  }
+  
+  // Hash password if it's modified and exists
+  if (this.isModified('password') && this.password) {
+    const salt = await bcrypt.genSalt(10);
+    this.password = await bcrypt.hash(this.password, salt);
+  }
+  
+  // Validate password requirement for private events
+  if (!this.isPublic && !this.password && this.isNew) {
+    return next(new Error('Password is required for private events'));
   }
   
   next();
@@ -423,15 +449,45 @@ eventSchema.statics.findByLocation = function(city) {
 
 // Enhanced method to add supplier with detailed information including package
 eventSchema.methods.addSupplierWithDetails = function(supplierId, serviceId, details = {}) {
-  const existingSupplier = this.suppliers.find(
+  // Find existing supplier-service combination
+  const existingSupplierIndex = this.suppliers.findIndex(
     s => s.supplierId.toString() === supplierId.toString() && 
          s.serviceId.toString() === serviceId.toString()
   );
   
-  if (existingSupplier) {
+  if (existingSupplierIndex !== -1) {
+    const existingSupplier = this.suppliers[existingSupplierIndex];
+    
+    // If trying to add the same package, throw error
+    if (details.selectedPackageId && existingSupplier.selectedPackageId) {
+      if (existingSupplier.selectedPackageId.toString() === details.selectedPackageId.toString()) {
+        const packageName = details.packageDetails?.name || existingSupplier.packageDetails?.name || 'Unknown Package';
+        throw new Error(`Package "${packageName}" is already selected for this supplier and service combination`);
+      }
+      
+      // Different package - REPLACE the old one
+      console.log(`Replacing package for supplier ${supplierId} and service ${serviceId}`);
+      this.suppliers[existingSupplierIndex].selectedPackageId = details.selectedPackageId;
+      this.suppliers[existingSupplierIndex].packageDetails = details.packageDetails;
+      this.suppliers[existingSupplierIndex].requestedPrice = details.requestedPrice;
+      this.suppliers[existingSupplierIndex].notes = details.notes;
+      this.suppliers[existingSupplierIndex].priority = details.priority || 'medium';
+      this.suppliers[existingSupplierIndex].requestedAt = new Date();
+      this.suppliers[existingSupplierIndex].status = 'pending';
+      
+      return this.save();
+    }
+    
+    // If no package specified for either, throw error
+    if (!details.selectedPackageId && !existingSupplier.selectedPackageId) {
+      throw new Error('Supplier already added for this service without a package');
+    }
+    
+    // If one has package and other doesn't, throw error
     throw new Error('Supplier already added for this service');
   }
   
+  // No existing supplier-service combination, add new entry
   const supplierData = {
     supplierId,
     serviceId,
@@ -574,6 +630,19 @@ eventSchema.methods.updateBudgetAllocation = function(allocations) {
   });
   
   return this.save();
+};
+
+// Method to compare password for private events
+eventSchema.methods.comparePassword = async function(candidatePassword) {
+  if (!this.password) {
+    return false;
+  }
+  return await bcrypt.compare(candidatePassword, this.password);
+};
+
+// Method to check if event requires password
+eventSchema.methods.requiresPassword = function() {
+  return !this.isPublic;
 };
 
 module.exports = mongoose.model('Event', eventSchema);

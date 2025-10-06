@@ -46,7 +46,7 @@ const supplierRegistrationSchema = Joi.object({
 
 
 // Available service categories (matching Service model enum values)
-const serviceCategories = {
+const SERVICE_CATEGORIES_INFO = {
   photography: {
     name: { en: 'Photography', he: 'צילום' },
     description: { 
@@ -141,7 +141,7 @@ router.get('/service-categories', async (req, res) => {
   try {
     res.json({
       success: true,
-      data: serviceCategories
+      data: SERVICE_CATEGORIES_INFO
     });
   } catch (error) {
     console.error('Get service categories error:', error);
@@ -230,9 +230,62 @@ router.post('/register', async (req, res) => {
       }
     });
 
-    // Generate email verification token
+    // Generate email verification token first
     const verificationToken = supplier.generateEmailVerificationToken();
+
+    // Create Service documents for each selected category
+    const createdServices = [];
+    console.log(`Creating services for categories: ${finalServiceCategories.join(', ')}`);
+    
+    for (const category of finalServiceCategories) {
+      try {
+        console.log(`Creating service for category: ${category}`);
+        const categoryInfo = SERVICE_CATEGORIES_INFO[category];
+        
+        if (!categoryInfo) {
+          console.error(`Category info not found for: ${category}`);
+          continue;
+        }
+        
+        const service = await Service.create({
+          supplierId: supplier._id,
+          title: `${categoryInfo.name.en} Services by ${name}`,
+          description: (description && description.trim()) || categoryInfo.description.en,
+          category: category,
+          location: {
+            city: location.city,
+            serviceRadius: 50
+          },
+          experience: supplier.supplierDetails.experience,
+          status: 'pending_approval', // Match supplier verification status
+          available: false, // Not available until approved and details are filled
+          portfolio: portfolio && portfolio.length > 0 ? portfolio.map(url => ({
+            image: url,
+            title: `Portfolio item`,
+            eventType: category
+          })) : []
+        });
+        
+        console.log(`Service created successfully: ${service._id} for category: ${category}`);
+        createdServices.push(service._id);
+      } catch (serviceError) {
+        console.error(`Error creating service for category ${category}:`, serviceError);
+        console.error('Service error details:', serviceError.message);
+        // Continue with other services even if one fails
+      }
+    }
+
+    console.log(`Total services created: ${createdServices.length}`);
+
+    // Link created services to the supplier and save everything at once
+    if (createdServices.length > 0) {
+      supplier.services = createdServices;
+      console.log(`Linking ${createdServices.length} services to supplier ${supplier._id}`);
+    }
+
+    // Save supplier with both email verification token and services
     await supplier.save();
+    console.log(`Supplier saved successfully with ${supplier.services.length} services`);
 
     // Send verification email
     try {
@@ -250,7 +303,7 @@ router.post('/register', async (req, res) => {
 
     res.status(201).json({
       success: true,
-      message: 'Registration submitted successfully. Once approved, you can create your services and packages in your dashboard.',
+      message: 'Registration submitted successfully. Once approved, you can update your service details and packages in your dashboard.',
       data: {
         supplier: {
           id: supplier._id,
@@ -258,7 +311,9 @@ router.post('/register', async (req, res) => {
           email: supplier.email,
           verificationStatus: supplier.verificationStatus,
           serviceCategories: finalServiceCategories,
-          categoriesCount: finalServiceCategories.length
+          categoriesCount: finalServiceCategories.length,
+          servicesCreated: createdServices.length,
+          serviceIds: createdServices
         }
       }
     });

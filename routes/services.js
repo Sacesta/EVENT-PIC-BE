@@ -801,22 +801,25 @@ router.delete("/:id", protect, requireApprovedSupplier, async (req, res) => {
   }
 });
 
-// @desc    Get supplier's services
+// @desc    Get supplier's services (including pending suppliers)
 // @route   GET /api/services/supplier/me
-// @access  Private (Approved suppliers only)
+// @access  Private (All suppliers - pending and approved)
 router.get(
   "/supplier/me",
   protect,
   authorize("supplier"),
-  requireApprovedSupplier,
   async (req, res) => {
     try {
-      const { page = 1, limit = 10, isActive } = req.query;
+      const { page = 1, limit = 10, status } = req.query;
 
       console.log("supplier Id -------->", req.user._id);
 
       const filter = { supplierId: req.user._id };
-      if (isActive !== undefined) filter.isActive = isActive === "true";
+      
+      // Allow filtering by status (active, pending_approval, inactive, suspended)
+      if (status) {
+        filter.status = status;
+      }
 
       const services = await Service.find(filter)
         .sort({ createdAt: -1 })
@@ -825,14 +828,39 @@ router.get(
 
       const total = await Service.countDocuments(filter);
 
+      // Get counts by status
+      const statusCounts = await Service.aggregate([
+        { $match: { supplierId: req.user._id } },
+        { $group: { _id: '$status', count: { $sum: 1 } } }
+      ]);
+
+      const counts = {
+        total: total,
+        active: 0,
+        pending_approval: 0,
+        inactive: 0,
+        suspended: 0
+      };
+
+      statusCounts.forEach(item => {
+        counts[item._id] = item.count;
+      });
+
       res.json({
         success: true,
         data: services,
+        counts: counts,
         pagination: {
           currentPage: parseInt(page),
           totalPages: Math.ceil(total / limit),
           totalServices: total,
         },
+        supplierStatus: {
+          verificationStatus: req.user.verificationStatus,
+          isVerified: req.user.isVerified,
+          canEditServices: true, // All suppliers can edit their services
+          canPublishServices: req.user.verificationStatus === 'approved' && req.user.isVerified
+        }
       });
     } catch (error) {
       console.error("Get supplier services error:", error);

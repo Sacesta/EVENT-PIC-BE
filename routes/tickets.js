@@ -12,7 +12,7 @@ const createTicketSchema = Joi.object({
   eventName: Joi.string().required(),
   title: Joi.string().max(200).required(),
   description: Joi.string().max(1000).optional(),
-  type: Joi.string().valid('vip', 'regular', 'early_bird', 'student', 'senior', 'child', 'custom').required(),
+  type: Joi.string().max(100).required(), // Allow any custom ticket type
   price: Joi.object({
     amount: Joi.number().min(0).required(),
     currency: Joi.string().valid('ILS', 'USD', 'EUR').default('ILS'),
@@ -57,7 +57,7 @@ const createTicketSchema = Joi.object({
 const updateTicketSchema = Joi.object({
   title: Joi.string().max(200).optional(),
   description: Joi.string().max(1000).optional(),
-  type: Joi.string().valid('vip', 'regular', 'early_bird', 'student', 'senior', 'child', 'custom').optional(),
+  type: Joi.string().max(100).optional(), // Allow any custom ticket type
   price: Joi.object({
     amount: Joi.number().min(0).optional(),
     currency: Joi.string().valid('ILS', 'USD', 'EUR').optional(),

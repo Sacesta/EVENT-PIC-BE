@@ -5,7 +5,7 @@ const User = require('../models/User');
 const Service = require('../models/Service');
 const Order = require('../models/Order');
 const { protect, authorize, requireApprovedSupplier } = require('../middleware/auth');
-
+    const Ticket = require('../models/Ticket');
 const router = express.Router();
 
 // Enhanced validation schemas
@@ -13,6 +13,9 @@ const createEventSchema = Joi.object({
   name: Joi.string().min(2).max(200).required(),
   description: Joi.string().min(10).max(2000).optional(),
   image: Joi.any().optional(),
+  password: Joi.string().min(6).optional().messages({
+    'string.min': 'Password must be at least 6 characters long'
+  }),
   startDate: Joi.date().greater('now').required(),
   endDate: Joi.date().greater(Joi.ref('startDate')).required(),
   location: Joi.object({
@@ -92,8 +95,52 @@ const createEventSchema = Joi.object({
     priceRange: Joi.object({
       min: Joi.number().min(0).optional(),
       max: Joi.number().min(0).optional()
-    }).optional()
+    }).optional(),
+    isFree: Joi.boolean().optional()
   }).optional(),
+  tickets: Joi.array().items(
+    Joi.alternatives().try(
+      // New simplified format
+      Joi.object({
+        title: Joi.string().max(200).required(),
+        description: Joi.string().max(1000).optional(),
+        type: Joi.string().max(100).required(),
+        price: Joi.number().min(0).required(),
+        currency: Joi.string().valid('ILS', 'USD', 'EUR').default('ILS').optional(),
+        quantity: Joi.number().min(1).required()
+      }),
+      // Legacy nested format (for backward compatibility)
+      Joi.object({
+        title: Joi.string().max(200).required(),
+        description: Joi.string().max(1000).optional(),
+        type: Joi.string().max(100).required(),
+        price: Joi.object({
+          amount: Joi.number().min(0).required(),
+          currency: Joi.string().valid('ILS', 'USD', 'EUR').default('ILS').optional(),
+          originalPrice: Joi.number().min(0).optional().allow(null),
+          discount: Joi.number().min(0).max(100).optional().allow(null)
+        }).required(),
+        quantity: Joi.alternatives().try(
+          Joi.number().min(1).required(),
+          Joi.object({
+            total: Joi.number().min(1).required(),
+            available: Joi.number().min(1).required(),
+            sold: Joi.number().optional(),
+            reserved: Joi.number().optional()
+          }).required()
+        ).required(),
+        restrictions: Joi.object({
+          ageLimit: Joi.object({
+            min: Joi.number().min(0).optional(),
+            max: Joi.number().min(0).optional()
+          }).optional(),
+          maxPerPerson: Joi.number().min(1).optional(),
+          requiresId: Joi.boolean().optional(),
+          specialRequirements: Joi.string().optional()
+        }).optional()
+      })
+    )
+  ).optional(),
   tags: Joi.array().items(Joi.string()).optional(),
   featured: Joi.boolean().default(false).optional(),
   status: Joi.string().valid('draft', 'approved', 'rejected', 'completed').optional(),
@@ -108,6 +155,9 @@ const updateEventSchema = Joi.object({
   name: Joi.string().min(2).max(200).optional(),
   description: Joi.string().min(10).max(2000).optional(),
   image: Joi.any().optional(),
+  password: Joi.string().min(6).optional().messages({
+    'string.min': 'Password must be at least 6 characters long'
+  }),
   startDate: Joi.date().optional(),
   endDate: Joi.date().optional(),
   location: Joi.object({
@@ -188,7 +238,8 @@ const updateEventSchema = Joi.object({
     priceRange: Joi.object({
       min: Joi.number().min(0).optional(),
       max: Joi.number().min(0).optional()
-    }).optional()
+    }).optional(),
+    isFree: Joi.boolean().optional()
   }).optional(),
   tags: Joi.array().items(Joi.string()).optional(),
   status: Joi.string().valid('draft', 'approved', 'rejected', 'completed').optional(),
@@ -223,6 +274,13 @@ const updateSupplierStatusSchema = Joi.object({
   supplierId: Joi.string().optional(),
   serviceId: Joi.object().optional(),
   status: Joi.string().valid('approved', 'rejected').required()
+});
+
+const verifyPasswordSchema = Joi.object({
+  password: Joi.string().required().messages({
+    'any.required': 'Password is required',
+    'string.empty': 'Password cannot be empty'
+  })
 });
 
 // @desc    Create new event with multiple suppliers and services
@@ -331,12 +389,104 @@ router.post('/', protect, authorize('producer'), async (req, res) => {
       eventData.ticketInfo = {
         availableTickets: 0,
         soldTickets: 0,
-        reservedTickets: 0
+        reservedTickets: 0,
+        priceRange: {
+          min: 0,
+          max: 0
+        },
+        isFree: true
       };
+    } else {
+      // Ensure isFree is set if not provided
+      if (eventData.ticketInfo.isFree === undefined) {
+        eventData.ticketInfo.isFree = true;
+      }
+      // Ensure priceRange exists
+      if (!eventData.ticketInfo.priceRange) {
+        eventData.ticketInfo.priceRange = {
+          min: 0,
+          max: 0
+        };
+      }
     }
     
+    // Extract tickets array if provided
+    const ticketsToCreate = eventData.tickets || [];
     delete eventData.suppliers; // Remove the transformed suppliers temporarily
+    delete eventData.tickets; // Remove tickets array temporarily
+    
     const event = await Event.create(eventData);
+
+    // Create ticket documents if tickets array was provided
+
+    if (ticketsToCreate.length > 0) {
+      const ticketDocuments = ticketsToCreate.map(ticket => {
+        // Handle both simplified and nested formats
+        const priceAmount = typeof ticket.price === 'number' ? ticket.price : ticket.price.amount;
+        const currency = ticket.currency || (typeof ticket.price === 'object' ? ticket.price.currency : null) || 'ILS';
+        const quantity = typeof ticket.quantity === 'number' ? ticket.quantity : ticket.quantity.total;
+        
+        return {
+          eventId: event._id,
+          eventName: event.name,
+          title: ticket.title,
+          description: ticket.description || '',
+          type: ticket.type,
+          price: {
+            amount: priceAmount,
+            currency: currency
+          },
+          quantity: {
+            total: quantity,
+            available: quantity,
+            sold: 0,
+            reserved: 0
+          },
+          status: 'active',
+          validity: {
+            startDate: event.startDate,
+            endDate: event.endDate,
+            isActive: true
+          },
+          sales: {
+            startDate: event.startDate,
+            endDate: event.endDate
+          },
+          restrictions: {
+            maxPerPerson: 10
+          },
+          refundPolicy: {
+            allowed: true,
+            deadline: 7,
+            fee: 0
+          }
+        };
+      });
+
+      const createdTickets = await Ticket.insertMany(ticketDocuments);
+      console.log(`Created ${createdTickets.length} tickets for event ${event._id}`);
+
+      // Update event's ticketInfo based on created tickets
+      const totalTickets = ticketsToCreate.reduce((sum, t) => {
+        const qty = typeof t.quantity === 'number' ? t.quantity : t.quantity.total;
+        return sum + qty;
+      }, 0);
+      const prices = ticketsToCreate.map(t => typeof t.price === 'number' ? t.price : t.price.amount);
+      
+      event.ticketInfo = {
+        availableTickets: totalTickets,
+        soldTickets: 0,
+        reservedTickets: 0,
+        priceRange: {
+          min: Math.min(...prices),
+          max: Math.max(...prices)
+        },
+        isFree: Math.min(...prices) === 0
+      };
+      
+      await event.save();
+      console.log(`Updated event ticketInfo: ${totalTickets} total tickets, price range: ${Math.min(...prices)} - ${Math.max(...prices)}`);
+    }
 
     // Add suppliers using the model method with package information
     for (const supplier of transformedSuppliers) {
@@ -367,7 +517,8 @@ router.post('/', protect, authorize('producer'), async (req, res) => {
     const populatedEvent = await Event.findById(event._id)
       .populate('producerId', 'name companyName profileImage email phone')
       .populate('suppliers.supplierId', 'name companyName profileImage email phone supplierDetails')
-      .populate('suppliers.serviceId', 'title description price category subcategories tags availability location experience rating portfolio packages featured');
+      .populate('suppliers.serviceId', 'title description price category subcategories tags availability location experience rating portfolio packages featured')
+      .populate('tickets');
 
     res.status(201).json({
       success: true,
@@ -474,7 +625,8 @@ router.post('/:id/suppliers', protect, async (req, res) => {
 
     const updatedEvent = await Event.findById(req.params.id)
       .populate('suppliers.supplierId', 'name companyName profileImage email phone supplierDetails')
-      .populate('suppliers.serviceId', 'title description price category subcategories tags availability location experience rating portfolio packages featured');
+      .populate('suppliers.serviceId', 'title description price category subcategories tags availability location experience rating portfolio packages featured')
+      .populate('tickets');
 
     res.json({
       success: true,
@@ -551,7 +703,8 @@ router.put('/:id/suppliers/bulk-status', protect, async (req, res) => {
 
     const updatedEvent = await Event.findById(req.params.id)
       .populate('suppliers.supplierId', 'name companyName profileImage email phone supplierDetails')
-      .populate('suppliers.serviceId', 'title description price category subcategories tags availability location experience rating portfolio packages featured');
+      .populate('suppliers.serviceId', 'title description price category subcategories tags availability location experience rating portfolio packages featured')
+      .populate('tickets');
 
     res.json({
       success: true,
@@ -673,7 +826,8 @@ router.put('/:eventId/supplier-status', protect, async (req, res) => {
     const updatedEvent = await Event.findById(req.params.eventId)
       .populate('producerId', 'name companyName profileImage email phone')
       .populate('suppliers.supplierId', 'name companyName profileImage email phone supplierDetails')
-      .populate('suppliers.serviceId', 'title description price category subcategories tags availability location experience rating portfolio packages featured');
+      .populate('suppliers.serviceId', 'title description price category subcategories tags availability location experience rating portfolio packages featured')
+      .populate('tickets');
 
     res.json({
       success: true,
@@ -920,12 +1074,13 @@ router.get('/my-events', protect, authorize('producer'), async (req, res) => {
 
     // Enhance events with additional details and statistics
     const enhancedEvents = events.map(event => {
-      const eventObj = event.toObject();
+      const eventObj = event.toObject({ virtuals: true });
       
       // Ensure all array fields are properly initialized to prevent frontend errors
       eventObj.suppliers = eventObj.suppliers || [];
       eventObj.requiredServices = eventObj.requiredServices || [];
       eventObj.tags = eventObj.tags || [];
+      eventObj.tickets = eventObj.tickets || [];
       
       // Ensure nested objects are properly initialized
       if (!eventObj.location) {
@@ -937,6 +1092,44 @@ router.get('/my-events', protect, authorize('producer'), async (req, res) => {
       if (!eventObj.budget) {
         eventObj.budget = { total: 0, allocated: {}, spent: 0 };
       }
+      
+      // Add detailed ticket statistics
+      const tickets = eventObj.tickets || [];
+      const ticketStats = {
+        totalTicketTypes: tickets.length,
+        totalTicketsAvailable: tickets.reduce((sum, t) => sum + (t.quantity?.total || 0), 0),
+        totalTicketsSold: tickets.reduce((sum, t) => sum + (t.quantity?.sold || 0), 0),
+        totalTicketsRemaining: tickets.reduce((sum, t) => {
+          const remaining = (t.quantity?.available || 0) - (t.quantity?.sold || 0) - (t.quantity?.reserved || 0);
+          return sum + remaining;
+        }, 0),
+        totalRevenue: tickets.reduce((sum, t) => sum + ((t.quantity?.sold || 0) * (t.price?.amount || 0)), 0),
+        ticketTypes: tickets.map(t => ({
+          id: t._id,
+          title: t.title,
+          type: t.type,
+          price: t.price?.amount || 0,
+          currency: t.price?.currency || 'ILS',
+          total: t.quantity?.total || 0,
+          sold: t.quantity?.sold || 0,
+          available: t.quantity?.available || 0,
+          remaining: (t.quantity?.available || 0) - (t.quantity?.sold || 0) - (t.quantity?.reserved || 0),
+          status: t.status,
+          soldPercentage: t.quantity?.total > 0 ? ((t.quantity?.sold || 0) / t.quantity.total * 100).toFixed(2) : 0,
+          revenue: (t.quantity?.sold || 0) * (t.price?.amount || 0),
+          isSoldOut: t.status === 'sold_out' || ((t.quantity?.available || 0) - (t.quantity?.sold || 0) - (t.quantity?.reserved || 0)) <= 0
+        })),
+        hasAvailableTickets: tickets.some(t => {
+          const remaining = (t.quantity?.available || 0) - (t.quantity?.sold || 0) - (t.quantity?.reserved || 0);
+          return remaining > 0;
+        }),
+        allSoldOut: tickets.length > 0 && tickets.every(t => {
+          const remaining = (t.quantity?.available || 0) - (t.quantity?.sold || 0) - (t.quantity?.reserved || 0);
+          return remaining <= 0;
+        })
+      };
+      
+      eventObj.ticketStats = ticketStats;
       
       // Add supplier statistics
       const suppliers = eventObj.suppliers || [];
@@ -961,6 +1154,8 @@ router.get('/my-events', protect, authorize('producer'), async (req, res) => {
         totalRequestedPrice,
         totalFinalPrice,
         estimatedCost: totalFinalPrice || totalRequestedPrice,
+        ticketRevenue: ticketStats.totalRevenue,
+        totalRevenue: (totalFinalPrice || totalRequestedPrice) + ticketStats.totalRevenue,
         budgetUtilization: eventObj.budget?.total ? 
           ((totalFinalPrice || totalRequestedPrice) / eventObj.budget.total) * 100 : 0
       };
@@ -1089,7 +1284,8 @@ router.get('/', async (req, res) => {
       minPrice,
       maxPrice,
       hasAvailableTickets,
-      supplierId
+      supplierId,
+      includePastEvents = false // New parameter to optionally include past events
     } = req.query;
 
     // console.log(minPrice,maxPrice);
@@ -1098,6 +1294,12 @@ router.get('/', async (req, res) => {
 
     // Build filter object
     const filter = { isPublic:true };
+    
+    // Filter out past events by default (only show current and future events)
+    // Past events are those where endDate is before current date
+    if (includePastEvents !== 'true') {
+      filter.endDate = { $gte: new Date() };
+    }
     
     if (category) filter.category = category;
     if (city) filter['location.city'] = new RegExp(city, 'i');
@@ -1200,7 +1402,7 @@ router.get('/', async (req, res) => {
 
 
 
-// @desc    Get single event with full supplier and service details
+// @desc    Get single event with full supplier and service details - Enhanced for view page
 // @route   GET /api/events/:id
 // @access  Public
 router.get('/:id', async (req, res) => {
@@ -1231,8 +1433,44 @@ router.get('/:id', async (req, res) => {
       await event.save();
     }
 
+    // Convert to object to add computed fields
+    const eventData = event.toObject({ virtuals: true });
+
+    // Add event status indicators
+    const now = new Date();
+    const eventStartDate = new Date(eventData.startDate);
+    const eventEndDate = new Date(eventData.endDate);
+    
+    eventData.eventStatus = {
+      isUpcoming: eventStartDate > now,
+      isActive: now >= eventStartDate && now <= eventEndDate,
+      isPast: eventEndDate < now,
+      hasStarted: eventStartDate <= now,
+      hasEnded: eventEndDate < now,
+      daysUntilStart: Math.ceil((eventStartDate - now) / (1000 * 60 * 60 * 24)),
+      daysUntilEnd: Math.ceil((eventEndDate - now) / (1000 * 60 * 60 * 24)),
+      duration: Math.ceil((eventEndDate - eventStartDate) / (1000 * 60 * 60 * 24))
+    };
+
+    // Calculate remaining tickets
+    const ticketInfo = eventData.ticketInfo || {};
+    eventData.remainingTickets = (ticketInfo.availableTickets || 0) - 
+                                  (ticketInfo.soldTickets || 0) - 
+                                  (ticketInfo.reservedTickets || 0);
+    
+    eventData.ticketAvailability = {
+      total: ticketInfo.availableTickets || 0,
+      sold: ticketInfo.soldTickets || 0,
+      reserved: ticketInfo.reservedTickets || 0,
+      remaining: eventData.remainingTickets,
+      percentageSold: ticketInfo.availableTickets > 0 
+        ? ((ticketInfo.soldTickets || 0) / ticketInfo.availableTickets * 100).toFixed(2)
+        : 0,
+      isAvailable: eventData.remainingTickets > 0
+    };
+
     // Group suppliers by supplier ID for better organization
-    const groupedSuppliers = event.suppliers
+    const groupedSuppliers = (eventData.suppliers || [])
       .filter(s => s.supplierId && s.serviceId)
       .reduce((acc, supplier) => {
         const supplierId = supplier.supplierId._id.toString();
@@ -1246,19 +1484,88 @@ router.get('/:id', async (req, res) => {
           service: supplier.serviceId,
           status: supplier.status,
           requestedPrice: supplier.requestedPrice,
+          finalPrice: supplier.finalPrice,
           notes: supplier.notes,
           priority: supplier.priority,
-          confirmedAt: supplier.confirmedAt
+          requestedAt: supplier.requestedAt,
+          confirmedAt: supplier.confirmedAt,
+          completedAt: supplier.completedAt,
+          selectedPackageId: supplier.selectedPackageId,
+          packageDetails: supplier.packageDetails,
+          messages: supplier.messages || []
         });
         return acc;
       }, {});
 
-    const eventData = event.toObject();
     eventData.groupedSuppliers = Object.values(groupedSuppliers);
+
+    // Add supplier statistics
+    const suppliers = eventData.suppliers || [];
+    const uniqueSuppliers = [...new Set(suppliers.map(s => s.supplierId?._id?.toString()).filter(Boolean))];
+    
+    eventData.supplierStats = {
+      totalSuppliers: uniqueSuppliers.length,
+      totalServices: suppliers.length,
+      approvedServices: suppliers.filter(s => s.status === 'approved').length,
+      pendingServices: suppliers.filter(s => s.status === 'pending').length,
+      rejectedServices: suppliers.filter(s => s.status === 'rejected').length,
+      cancelledServices: suppliers.filter(s => s.status === 'cancelled').length
+    };
+
+    // Add financial summary
+    const totalRequestedPrice = suppliers.reduce((sum, s) => sum + (s.requestedPrice || 0), 0);
+    const totalFinalPrice = suppliers
+      .filter(s => s.status === 'approved' && s.finalPrice)
+      .reduce((sum, s) => sum + s.finalPrice, 0);
+
+    eventData.financialSummary = {
+      totalRequestedPrice,
+      totalFinalPrice,
+      estimatedCost: totalFinalPrice || totalRequestedPrice,
+      budgetTotal: eventData.budget?.total || 0,
+      budgetSpent: eventData.budget?.spent || 0,
+      budgetRemaining: (eventData.budget?.total || 0) - (totalFinalPrice || totalRequestedPrice),
+      budgetUtilization: eventData.budget?.total 
+        ? (((totalFinalPrice || totalRequestedPrice) / eventData.budget.total) * 100).toFixed(2)
+        : 0
+    };
+
+    // Add location details with full address
+    eventData.locationDetails = {
+      fullAddress: eventData.location?.address || '',
+      city: eventData.location?.city || '',
+      coordinates: eventData.location?.coordinates || null,
+      hasCoordinates: !!(eventData.location?.coordinates?.lat && eventData.location?.coordinates?.lng)
+    };
+
+    // Add engagement metrics
+    eventData.engagement = {
+      views: eventData.views || 0,
+      likes: (eventData.likes || []).length,
+      interestedCount: eventData.analytics?.supplierRequests || 0
+    };
+
+    // Get recommended events (same category, same city, future events, excluding current event)
+    const recommendedEvents = await Event.find({
+      _id: { $ne: event._id },
+      category: event.category,
+      'location.city': event.location?.city,
+      isPublic: true,
+      status: 'approved',
+      endDate: { $gte: new Date() },
+      startDate: { $gte: new Date() }
+    })
+    .populate('producerId', 'name companyName profileImage')
+    .select('name description image startDate endDate location category ticketInfo views featured')
+    .sort({ startDate: 1, featured: -1 })
+    .limit(5);
+
+    eventData.recommendedEvents = recommendedEvents;
 
     res.json({
       success: true,
-      data: eventData
+      data: eventData,
+      message: 'Event details retrieved successfully'
     });
   } catch (error) {
     console.error('Get event error:', error);
@@ -1481,7 +1788,7 @@ router.put('/:id', protect, authorize('producer'), async (req, res) => {
     // Find the event
     const event = await Event.findById(req.params.id);
     if (!event) {
-      return res.status(404).json({
+      return res.status(404).json({ 
         success: false,
         message: 'Event not found'
       });
@@ -1527,12 +1834,12 @@ router.put('/:id', protect, authorize('producer'), async (req, res) => {
       const services = await Service.find({ _id: { $in: serviceIds } });
       console.log(`Found ${services.length} services out of ${serviceIds.length}`);
 
-      if (services.length !== serviceIds.length) {
-        return res.status(400).json({
-          success: false,
-          message: 'One or more services not found'
-        });
-      }
+      // if (services.length !== serviceIds.length) {
+      //   return res.status(400).json({
+      //     success: false,
+      //     message: 'One or more services not found'
+      //   });
+      // }
 
       // Validate that each service belongs to the correct supplier
       for (const supplierData of value.suppliers) {
@@ -1557,6 +1864,11 @@ router.put('/:id', protect, authorize('producer'), async (req, res) => {
           });
         }
       }
+
+      // Note: We allow package replacement now
+      // If a supplier-service combination exists with a different package,
+      // the addSupplierWithDetails method will automatically replace it
+      console.log("Package replacement is allowed. Proceeding with update...");
     }
 
     // Transform suppliers data for the schema with package information (same as create endpoint)
@@ -1599,14 +1911,21 @@ router.put('/:id', protect, authorize('producer'), async (req, res) => {
     // If ticketInfo is not provided, set default values to satisfy model requirements
     if (!updateData.ticketInfo && value.ticketInfo === undefined) {
       // Don't override existing ticketInfo if not provided in update
-    } else if (updateData.ticketInfo && !updateData.ticketInfo.availableTickets) {
+    } else if (updateData.ticketInfo) {
+      // Ensure all required fields are present
       updateData.ticketInfo = {
         availableTickets: updateData.ticketInfo.availableTickets || 0,
         soldTickets: updateData.ticketInfo.soldTickets || 0,
         reservedTickets: updateData.ticketInfo.reservedTickets || 0,
+        priceRange: updateData.ticketInfo.priceRange || { min: 0, max: 0 },
+        isFree: updateData.ticketInfo.isFree !== undefined ? updateData.ticketInfo.isFree : true,
         ...updateData.ticketInfo
       };
     }
+
+    // Extract tickets array if provided for update
+    const ticketsToUpdate = value.tickets || [];
+    delete updateData.tickets; // Remove tickets array temporarily
 
     // Update the event basic fields
     console.log("Updating event basic fields...");
@@ -1617,6 +1936,83 @@ router.put('/:id', protect, authorize('producer'), async (req, res) => {
     );
 
     console.log("Event basic fields updated successfully");
+
+    // Handle ticket updates if provided
+    if (ticketsToUpdate.length > 0) {
+      console.log(`Updating/Creating ${ticketsToUpdate.length} tickets...`);
+      
+      // Delete existing tickets for this event
+      await Ticket.deleteMany({ eventId: req.params.id });
+      console.log("Deleted existing tickets");
+      
+      // Create new ticket documents
+      const ticketDocuments = ticketsToUpdate.map(ticket => {
+        // Handle both simplified and nested formats
+        const priceAmount = typeof ticket.price === 'number' ? ticket.price : ticket.price.amount;
+        const currency = ticket.currency || (typeof ticket.price === 'object' ? ticket.price.currency : null) || 'ILS';
+        const quantity = typeof ticket.quantity === 'number' ? ticket.quantity : ticket.quantity.total;
+        
+        return {
+          eventId: updatedEvent._id,
+          eventName: updatedEvent.name,
+          title: ticket.title,
+          description: ticket.description || '',
+          type: ticket.type,
+          price: {
+            amount: priceAmount,
+            currency: currency
+          },
+          quantity: {
+            total: quantity,
+            available: quantity,
+            sold: 0,
+            reserved: 0
+          },
+          status: 'active',
+          validity: {
+            startDate: updatedEvent.startDate,
+            endDate: updatedEvent.endDate,
+            isActive: true
+          },
+          sales: {
+            startDate: updatedEvent.startDate,
+            endDate: updatedEvent.endDate
+          },
+          restrictions: {
+            maxPerPerson: 10
+          },
+          refundPolicy: {
+            allowed: true,
+            deadline: 7,
+            fee: 0
+          }
+        };
+      });
+
+      const createdTickets = await Ticket.insertMany(ticketDocuments);
+      console.log(`Created ${createdTickets.length} new tickets for event ${updatedEvent._id}`);
+
+      // Update event's ticketInfo based on created tickets
+      const totalTickets = ticketsToUpdate.reduce((sum, t) => {
+        const qty = typeof t.quantity === 'number' ? t.quantity : t.quantity.total;
+        return sum + qty;
+      }, 0);
+      const prices = ticketsToUpdate.map(t => typeof t.price === 'number' ? t.price : t.price.amount);
+      
+      updatedEvent.ticketInfo = {
+        availableTickets: totalTickets,
+        soldTickets: 0,
+        reservedTickets: 0,
+        priceRange: {
+          min: Math.min(...prices),
+          max: Math.max(...prices)
+        },
+        isFree: Math.min(...prices) === 0
+      };
+      
+      await updatedEvent.save();
+      console.log(`Updated event ticketInfo: ${totalTickets} total tickets, price range: ${Math.min(...prices)} - ${Math.max(...prices)}`);
+    }
 
     // Handle suppliers update if provided
     if (transformedSuppliers.length > 0) {
@@ -1679,7 +2075,8 @@ router.put('/:id', protect, authorize('producer'), async (req, res) => {
       .populate({
         path: 'suppliers.serviceId',
         select: 'title description price category subcategories tags availability location experience rating portfolio packages featured'
-      });
+      })
+      .populate('tickets');
 
     console.log("Final populated event suppliers count:", populatedEvent.suppliers.length);
     console.log("=== UPDATE EVENT COMPLETE ===");
@@ -1781,6 +2178,80 @@ router.get('/orders', protect, requireApprovedSupplier, async (req, res) => {
   }
 });
 
+// @desc    Verify password for private event
+// @route   POST /api/events/:id/verify-password
+// @access  Public
+router.post('/:id/verify-password', async (req, res) => {
+  try {
+    // Validate input
+    const { error, value } = verifyPasswordSchema.validate(req.body);
+    
+    if (error) {
+      return res.status(400).json({
+        success: false,
+        message: 'Validation error',
+        errors: error.details.map(detail => detail.message)
+      });
+    }
 
+    const { password } = value;
+
+    // Find the event and explicitly select the password field
+    const event = await Event.findById(req.params.id).select('+password');
+    
+    if (!event) {
+      return res.status(404).json({
+        success: false,
+        message: 'Event not found'
+      });
+    }
+
+    // Check if event is private
+    if (event.isPublic) {
+      return res.status(400).json({
+        success: false,
+        message: 'This event is public and does not require a password'
+      });
+    }
+
+    // Check if event has a password set
+    if (!event.password) {
+      return res.status(400).json({
+        success: false,
+        message: 'This private event does not have a password set'
+      });
+    }
+
+    // Verify the password
+    const isPasswordCorrect = await event.comparePassword(password);
+
+    if (!isPasswordCorrect) {
+      return res.status(401).json({
+        success: false,
+        message: 'Incorrect password'
+      });
+    }
+
+    // Password is correct - return success with basic event info
+    res.json({
+      success: true,
+      message: 'Password verified successfully',
+      data: {
+        eventId: event._id,
+        eventName: event.name,
+        isPrivate: !event.isPublic,
+        accessGranted: true
+      }
+    });
+
+  } catch (error) {
+    console.error('Verify password error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error verifying password',
+      error: error.message
+    });
+  }
+});
 
 module.exports = router;

@@ -23,7 +23,8 @@ const ticketSchema = new mongoose.Schema({
   type: {
     type: String,
     required: [true, 'Ticket type is required'],
-    enum: ['vip', 'regular', 'early_bird', 'student', 'senior', 'child', 'custom']
+    trim: true,
+    maxlength: [100, 'Ticket type cannot exceed 100 characters']
   },
   price: {
     amount: {
