@@ -73,7 +73,7 @@ router.post('/register', async (req, res) => {
       });
     }
 
-    // Create producer user
+    // Create producer user with verified status
     const producer = await User.create({
       name,
       email,
@@ -92,19 +92,16 @@ router.post('/register', async (req, res) => {
       },
       // Producers don't need admin approval - they can start using the platform immediately
       verificationStatus: 'approved',
-      isVerified: false, // Still need email verification
+      isVerified: true, // Auto-verify at registration
       isActive: true
     });
 
-    // Generate email verification token
-    const verificationToken = producer.generateEmailVerificationToken();
-    await producer.save();
-
-    // Send verification email
+    // Send welcome email directly (skip verification step)
     try {
-      await emailService.sendVerificationEmail(producer, verificationToken);
+      await emailService.sendWelcomeEmail(producer);
+      console.log('✅ Welcome email sent to producer');
     } catch (emailError) {
-      console.error('Failed to send verification email:', emailError);
+      console.error('❌ Failed to send welcome email:', emailError);
       // Don't fail registration if email fails, but log the error
     }
 
@@ -113,7 +110,7 @@ router.post('/register', async (req, res) => {
 
     res.status(201).json({
       success: true,
-      message: 'Producer registered successfully! Please check your email to verify your account.',
+      message: 'Producer registered successfully! Welcome to PIC!',
       data: {
         producer: {
           id: producer._id,

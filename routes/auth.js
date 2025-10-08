@@ -98,23 +98,21 @@ router.post('/register', async (req, res) => {
       });
     }
 
-    // Create user
+    // Create user with verified status
     const user = await User.create({
       email,
       password,
       role,
-      ...userData
+      ...userData,
+      isVerified: true // Auto-verify user at registration
     });
 
-    // Generate email verification token
-    const verificationToken = user.generateEmailVerificationToken();
-    await user.save();
-
-    // Send verification email
+    // Send welcome email directly (skip verification step)
     try {
-      await emailService.sendVerificationEmail(user, verificationToken);
+      await emailService.sendWelcomeEmail(user);
+      console.log('✅ Welcome email sent successfully');
     } catch (emailError) {
-      console.error('Failed to send verification email:', emailError);
+      console.error('❌ Failed to send welcome email:', emailError);
       // Don't fail registration if email fails, but log the error
     }
 
@@ -123,11 +121,10 @@ router.post('/register', async (req, res) => {
 
     res.status(201).json({
       success: true,
-      message: 'User registered successfully. Please check your email to verify your account.',
+      message: 'User registered successfully. Welcome to PIC!',
       data: {
         user: user.getPublicProfile(),
-        token,
-        emailVerificationSent: true
+        token
       }
     });
   } catch (error) {

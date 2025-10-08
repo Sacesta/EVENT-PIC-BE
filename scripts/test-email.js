@@ -1,5 +1,9 @@
+// Load environment variables FIRST before requiring any modules
+// Specify the path to .env file explicitly
+const path = require('path');
+require('dotenv').config({ path: path.join(__dirname, '..', '.env') });
+
 const emailService = require('../services/emailService');
-require('dotenv').config();
 
 async function testEmailService() {
   console.log('🧪 Testing Email Service...\n');
@@ -17,7 +21,7 @@ async function testEmailService() {
   console.log('2. Testing verification email...');
   const testUser = {
     name: 'Test User',
-    email: 'test@example.com',
+    email: 'falguni.sacesta@gmail.com',
     role: 'producer'
   };
   

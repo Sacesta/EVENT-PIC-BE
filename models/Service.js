@@ -24,8 +24,9 @@ const serviceSchema = new mongoose.Schema({
   price: {
     amount: {
       type: Number,
-      required: [true, 'Price amount is required'],
-      min: [0, 'Price cannot be negative']
+      required: false, // Made optional - pricing handled in packages
+      min: [0, 'Price cannot be negative'],
+      default: 0
     },
     currency: {
       type: String,
@@ -35,7 +36,7 @@ const serviceSchema = new mongoose.Schema({
     pricingType: {
       type: String,
       enum: ['fixed', 'per_hour', 'per_person', 'per_day', 'per_project', 'negotiable'],
-      default: 'fixed'
+      default: 'negotiable'
     },
     minPrice: {
       type: Number,
@@ -46,15 +47,33 @@ const serviceSchema = new mongoose.Schema({
       min: [0, 'Maximum price cannot be negative']
     }
   },
-  category: {
-    type: String,
-    required: [true, 'Service category is required'],
-    enum: [
-      'photography', 'videography', 'catering', 'music', 
-      'decoration', 'transportation', 'security', 'lighting',
-      'sound', 'furniture', 'tents', 'other'
-    ]
-  },
+category: {
+  type: String,
+  required: [true, 'Service category is required'],
+  enum: [
+    'photography',          // צלמים
+    'videography',          // וידאו
+    'catering',             // קייטרינג
+    'bar',                  // בר
+    'music',                // מוזיקה
+    'musicians',            // אומנים
+    'decoration',           // תפאורה
+    'scenery',              // scenery / תפאורה
+    'lighting',             // תאורה
+    'sound',                // הגברה
+    'sounds_lights',        // הגברה ותאורה
+    'transportation',       // שירותי הסעות
+    'security',             // אבטחה
+    'first_aid',            // עזרה ראשונה
+    'insurance',            // ביטוח
+    'furniture',            // ריהוט
+    'tents',                // אוהלים
+    'location',             // מקומות להשכרה
+    'dj',                   // DJ
+    'other'                 // אחר
+  ]
+}
+,
   subcategories: [{
     type: String,
     trim: true

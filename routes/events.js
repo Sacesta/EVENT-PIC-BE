@@ -5,7 +5,8 @@ const User = require('../models/User');
 const Service = require('../models/Service');
 const Order = require('../models/Order');
 const { protect, authorize, requireApprovedSupplier } = require('../middleware/auth');
-    const Ticket = require('../models/Ticket');
+const Ticket = require('../models/Ticket');
+const emailService = require('../services/emailService');
 const router = express.Router();
 
 // Enhanced validation schemas
@@ -28,19 +29,26 @@ const createEventSchema = Joi.object({
   }).required(),
   language: Joi.string().valid('he', 'en', 'ar').default('he'),
   category: Joi.string().valid(
-  'birthday',
-  'wedding',
-  'corporate',
-  'conference',
-  'workshop',
-  'concert',
-  'festival',
-  'graduation',
-  'anniversary',
-  'baby-shower',
-  'networking',
-  'charity',
-  'other'
+ 'photography',          // צלמים
+    'videography',          // וידאו
+    'catering',             // קייטרינג
+    'bar',                  // בר
+    'music',                // מוזיקה
+    'musicians',            // אומנים
+    'decoration',           // תפאורה
+    'scenery',              // scenery / תפאורה
+    'lighting',             // תאורה
+    'sound',                // הגברה
+    'sounds_lights',        // הגברה ותאורה
+    'transportation',       // שירותי הסעות
+    'security',             // אבטחה
+    'first_aid',            // עזרה ראשונה
+    'insurance',            // ביטוח
+    'furniture',            // ריהוט
+    'tents',                // אוהלים
+    'location',             // מקומות להשכרה
+    'dj',                   // DJ
+    'other'      
 ).required(),
 
   requiredServices: Joi.array().items(Joi.string().valid(
@@ -170,19 +178,26 @@ const updateEventSchema = Joi.object({
   }).optional(),
   language: Joi.string().valid('he', 'en', 'ar').optional(),
   category: Joi.string().valid(
-    'birthday',
-  'wedding',
-  'corporate',
-  'conference',
-  'workshop',
-  'concert',
-  'festival',
-  'graduation',
-  'anniversary',
-  'baby-shower',
-  'networking',
-  'charity',
-  'other'
+    'photography',          // צלמים
+    'videography',          // וידאו
+    'catering',             // קייטרינג
+    'bar',                  // בר
+    'music',                // מוזיקה
+    'musicians',            // אומנים
+    'decoration',           // תפאורה
+    'scenery',              // scenery / תפאורה
+    'lighting',             // תאורה
+    'sound',                // הגברה
+    'sounds_lights',        // הגברה ותאורה
+    'transportation',       // שירותי הסעות
+    'security',             // אבטחה
+    'first_aid',            // עזרה ראשונה
+    'insurance',            // ביטוח
+    'furniture',            // ריהוט
+    'tents',                // אוהלים
+    'location',             // מקומות להשכרה
+    'dj',                   // DJ
+    'other'      
   ).optional(),
   requiredServices: Joi.array().items(Joi.string().valid(
        'photography', 'videography', 'catering', 'music', 
@@ -520,6 +535,35 @@ router.post('/', protect, authorize('producer'), async (req, res) => {
       .populate('suppliers.serviceId', 'title description price category subcategories tags availability location experience rating portfolio packages featured')
       .populate('tickets');
 
+    // Send event created email to producer
+    try {
+      await emailService.sendEventCreatedEmail(req.user, populatedEvent);
+      console.log('✅ Event created email sent to producer');
+    } catch (emailError) {
+      console.error('❌ Failed to send event created email:', emailError);
+      // Don't fail the request if email fails
+    }
+
+    // Send invitation emails to all suppliers
+    if (populatedEvent.suppliers && populatedEvent.suppliers.length > 0) {
+      for (const supplierEntry of populatedEvent.suppliers) {
+        if (supplierEntry.supplierId && supplierEntry.serviceId) {
+          try {
+            await emailService.sendEventInvitationEmail(
+              supplierEntry.supplierId,
+              populatedEvent,
+              req.user,
+              supplierEntry.serviceId
+            );
+            console.log(`✅ Invitation email sent to supplier ${supplierEntry.supplierId.email}`);
+          } catch (emailError) {
+            console.error(`❌ Failed to send invitation email to supplier ${supplierEntry.supplierId._id}:`, emailError);
+            // Continue with other suppliers even if one fails
+          }
+        }
+      }
+    }
+
     res.status(201).json({
       success: true,
       data: populatedEvent,
@@ -624,9 +668,35 @@ router.post('/:id/suppliers', protect, async (req, res) => {
     }
 
     const updatedEvent = await Event.findById(req.params.id)
+      .populate('producerId', 'name companyName profileImage email phone')
       .populate('suppliers.supplierId', 'name companyName profileImage email phone supplierDetails')
       .populate('suppliers.serviceId', 'title description price category subcategories tags availability location experience rating portfolio packages featured')
       .populate('tickets');
+
+    // Send invitation emails to newly added suppliers
+    if (addedSuppliers.length > 0) {
+      for (const addedSupplier of addedSuppliers) {
+        const supplierEntry = updatedEvent.suppliers.find(
+          s => s.supplierId._id.toString() === addedSupplier.supplierId && 
+               s.serviceId._id.toString() === addedSupplier.serviceId
+        );
+        
+        if (supplierEntry && supplierEntry.supplierId && supplierEntry.serviceId) {
+          try {
+            await emailService.sendEventInvitationEmail(
+              supplierEntry.supplierId,
+              updatedEvent,
+              updatedEvent.producerId,
+              supplierEntry.serviceId
+            );
+            console.log(`✅ Invitation email sent to supplier ${supplierEntry.supplierId.email}`);
+          } catch (emailError) {
+            console.error(`❌ Failed to send invitation email to supplier ${supplierEntry.supplierId._id}:`, emailError);
+            // Continue with other suppliers even if one fails
+          }
+        }
+      }
+    }
 
     res.json({
       success: true,
@@ -828,6 +898,35 @@ router.put('/:eventId/supplier-status', protect, async (req, res) => {
       .populate('suppliers.supplierId', 'name companyName profileImage email phone supplierDetails')
       .populate('suppliers.serviceId', 'title description price category subcategories tags availability location experience rating portfolio packages featured')
       .populate('tickets');
+
+    // Send email notifications based on status change
+    const supplierData = updatedEvent.suppliers[supplierIndex];
+    if (supplierData.supplierId && supplierData.serviceId && updatedEvent.producerId) {
+      try {
+        if (status === 'approved') {
+          // Send approval email to producer
+          await emailService.sendSupplierApprovedEventEmail(
+            updatedEvent.producerId,
+            updatedEvent,
+            supplierData.supplierId,
+            supplierData.serviceId
+          );
+          console.log('✅ Supplier approved event email sent to producer');
+        } else if (status === 'rejected') {
+          // Send rejection email to producer
+          await emailService.sendSupplierRejectedEventEmail(
+            updatedEvent.producerId,
+            updatedEvent,
+            supplierData.supplierId,
+            supplierData.serviceId
+          );
+          console.log('✅ Supplier rejected event email sent to producer');
+        }
+      } catch (emailError) {
+        console.error('❌ Failed to send status update email:', emailError);
+        // Don't fail the request if email fails
+      }
+    }
 
     res.json({
       success: true,
@@ -1908,6 +2007,12 @@ router.put('/:id', protect, authorize('producer'), async (req, res) => {
 
     console.log("Update data (without suppliers):", JSON.stringify(updateData, null, 2));
 
+    // Handle password update explicitly since it has select: false
+    if (value.password) {
+      console.log("Password update detected");
+      event.password = value.password; // Will be hashed by pre-save middleware
+    }
+
     // If ticketInfo is not provided, set default values to satisfy model requirements
     if (!updateData.ticketInfo && value.ticketInfo === undefined) {
       // Don't override existing ticketInfo if not provided in update
@@ -1929,11 +2034,12 @@ router.put('/:id', protect, authorize('producer'), async (req, res) => {
 
     // Update the event basic fields
     console.log("Updating event basic fields...");
-    const updatedEvent = await Event.findByIdAndUpdate(
-      req.params.id,
-      updateData,
-      { new: true, runValidators: true }
-    );
+    
+    // Apply updates to the event object
+    Object.assign(event, updateData);
+    
+    // Save the event (this will trigger pre-save middleware for password hashing)
+    const updatedEvent = await event.save();
 
     console.log("Event basic fields updated successfully");
 

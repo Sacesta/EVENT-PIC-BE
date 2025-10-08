@@ -168,19 +168,36 @@ chatSchema.methods.getUnreadCount = function(userId) {
   return unreadCount ? unreadCount.count : 0;
 };
 
+// Method to update last message
+chatSchema.methods.updateLastMessage = function(message) {
+  this.lastMessage = {
+    content: message.content,
+    sender: message.sender._id || message.sender,
+    timestamp: message.createdAt || new Date()
+  };
+  return this.save();
+};
+
 // Static method to find or create chat between users
 chatSchema.statics.findOrCreateChat = async function(participants, eventId = null) {
   // Create a sorted array of participant IDs for consistent lookup
   const participantIds = participants.map(p => p.userId).sort();
   
-  // Try to find existing chat
+  console.log('Finding or creating chat with participants:', participantIds);
+  
+  // Try to find existing chat with exact same participants
+  // Use $all to ensure all participants are present, and $size to ensure no extra participants
   let chat = await this.findOne({
     'participants.user': { $all: participantIds },
-    event: eventId || null,
+    $expr: { $eq: [{ $size: '$participants' }, participantIds.length] },
+   
     status: 'active'
   }).populate('participants.user', 'name email role profileImage');
   
+  console.log('Existing chat found:', chat ? chat._id : 'No');
+  
   if (!chat) {
+    console.log('Creating new chat...');
     // Create new chat
     chat = new this({
       participants: participants.map(p => ({
@@ -189,7 +206,6 @@ chatSchema.statics.findOrCreateChat = async function(participants, eventId = nul
         lastReadAt: new Date(),
         isActive: true
       })),
-      event: eventId,
       unreadCounts: participants.map(p => ({
         user: p.userId,
         count: 0
@@ -197,6 +213,7 @@ chatSchema.statics.findOrCreateChat = async function(participants, eventId = nul
     });
     
     await chat.save();
+    console.log('New chat created:', chat._id);
     
     // Populate the created chat
     chat = await this.findById(chat._id).populate('participants.user', 'name email role profileImage');
@@ -211,7 +228,7 @@ chatSchema.statics.findUserChats = function(userId, userRole, options = {}) {
     status: 'active'
   };
   
-  // If user is admin, they can see all chats
+  // If user is NOT admin, they can only see chats they're part of
   if (userRole !== 'admin') {
     query['participants.user'] = userId;
   }

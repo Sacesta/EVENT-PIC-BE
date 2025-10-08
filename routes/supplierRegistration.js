@@ -283,15 +283,17 @@ router.post('/register', async (req, res) => {
       console.log(`Linking ${createdServices.length} services to supplier ${supplier._id}`);
     }
 
-    // Save supplier with both email verification token and services
+    // Auto-verify supplier at registration and save
+    supplier.isVerified = true;
     await supplier.save();
     console.log(`Supplier saved successfully with ${supplier.services.length} services`);
 
-    // Send verification email
+    // Send welcome email directly (skip verification step)
     try {
-      await emailService.sendVerificationEmail(supplier, verificationToken);
+      await emailService.sendWelcomeEmail(supplier);
+      console.log('✅ Welcome email sent to supplier');
     } catch (emailError) {
-      console.error('Failed to send verification email:', emailError);
+      console.error('❌ Failed to send welcome email:', emailError);
     }
 
     // Send notification to admin about new supplier registration

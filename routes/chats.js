@@ -54,61 +54,112 @@ router.get('/', protect, async (req, res) => {
 // @route   POST /api/chats
 // @access  Private
 router.post('/', protect, async (req, res) => {
+  console.log('\n=== CREATE CHAT REQUEST START ===');
+  console.log('1. Request received at:', new Date().toISOString());
+  console.log('2. Request method:', req.method);
+  console.log('3. Content-Type header:', req.headers['content-type']);
+  console.log('4. req.body exists:', !!req.body);
+  console.log('5. req.body type:', typeof req.body);
+  console.log('6. req.body content:', JSON.stringify(req.body, null, 2));
+  
   try {
+    console.log("Creating or finding chat with body:", req.body);
     const { participants, eventId, title } = req.body;
+
     const currentUserId = req.user._id;
 
+    console.log("7. Extracted values:");
+    console.log("   - Current user ID:", currentUserId);
+    console.log("   - Participants:", JSON.stringify(participants, null, 2));
+    console.log("   - Event ID:", eventId);
+    console.log("   - Title:", title);
+
     // Validate participants
+    console.log("8. Validating participants...");
     if (!participants || !Array.isArray(participants) || participants.length === 0) {
+      console.log("   ❌ Validation failed - participants invalid");
       return res.status(400).json({
         success: false,
         message: 'Participants are required'
       });
     }
+    console.log("   ✓ Participants valid, count:", participants.length);
 
     // Add current user to participants if not already included
+    console.log("9. Checking if current user in participants...");
     const allParticipants = [...participants];
     const currentUserExists = allParticipants.some(p => p.userId === currentUserId.toString());
+    console.log("   Current user exists:", currentUserExists);
+    
     if (!currentUserExists) {
+      console.log("   Adding current user to participants");
       allParticipants.unshift({
         userId: currentUserId.toString(),
         role: req.user.role
       });
     }
+    console.log("   Total participants:", allParticipants.length);
 
     // Validate that all participants exist and are active
+    console.log("10. Validating users in database...");
     const participantIds = allParticipants.map(p => p.userId);
+    console.log("    Participant IDs:", participantIds);
+    
     const users = await User.find({
       _id: { $in: participantIds },
       isActive: true
     }).select('_id name email role');
+    
+    console.log("    Found users:", users.length, "/ Expected:", participantIds.length);
 
     if (users.length !== participantIds.length) {
+      console.log("    ❌ User validation failed");
       return res.status(400).json({
         success: false,
         message: 'One or more participants not found or inactive'
       });
     }
+    console.log("    ✓ All users validated");
 
     // Validate event if provided
     if (eventId) {
+      console.log("11. Validating event:", eventId);
       const event = await Event.findById(eventId);
       if (!event) {
+        console.log("    ❌ Event not found");
         return res.status(400).json({
           success: false,
           message: 'Event not found'
         });
       }
+      console.log("    ✓ Event validated:", event.name);
+    } else {
+      console.log("11. No eventId provided, skipping event validation");
     }
 
     // Find or create chat
+    console.log("12. Calling Chat.findOrCreateChat...");
+    console.log("    Params:", { 
+      participantCount: allParticipants.length, 
+      eventId: eventId || 'none' 
+    });
+    
     const chat = await Chat.findOrCreateChat(allParticipants, eventId);
     
+    console.log("13. Chat result:");
+    console.log("    Chat ID:", chat._id);
+    console.log("    Participants:", chat.participants.length);
+    console.log("    Status:", chat.status);
+    
     if (title && title.trim()) {
+      console.log("14. Updating chat title to:", title.trim());
       chat.title = title.trim();
       await chat.save();
     }
 
+    console.log("15. ✓ Success! Sending response...");
+    console.log('=== CREATE CHAT REQUEST END ===\n');
+    
     res.status(200).json({
       success: true,
       data: chat
@@ -118,6 +169,378 @@ router.post('/', protect, async (req, res) => {
     res.status(500).json({
       success: false,
       message: 'Failed to create/find chat',
+      error: error.message
+    });
+  }
+});
+
+// @desc    Send a message to a chat
+// @route   POST /api/chats/:chatId/messages
+// @access  Private
+router.post('/:chatId/messages', protect, async (req, res) => {
+  try {
+    const { chatId } = req.params;
+    const { content, type = 'text', replyTo, attachments } = req.body;
+    const userId = req.user._id;
+
+
+
+    console.log("content:", content);    console.log("type:", type);
+    console.log("replyTo:", replyTo);
+    console.log("attachments:", attachments);   
+
+    // Validate content
+    if (!content || !content.trim()) {
+      return res.status(400).json({
+        success: false,
+        message: 'Message content is required'
+      });
+    }
+
+    // Verify user is participant in this chat (or admin)
+    const chat = await Chat.findById(chatId).populate('participants.user', '_id name role');
+    if (!chat) {
+      return res.status(404).json({
+        success: false,
+        message: 'Chat not found'
+      });
+    }
+
+    const isParticipant = chat.participants.some(p => p.user._id.toString() === userId.toString());
+    
+    if (!isParticipant) {
+      return res.status(403).json({
+        success: false,
+        message: 'Not authorized to send messages to this chat'
+      });
+    }
+
+    // Validate message type
+    const validTypes = ['text', 'image', 'file', 'system'];
+    if (!validTypes.includes(type)) {
+      return res.status(400).json({
+        success: false,
+        message: `Invalid message type. Must be one of: ${validTypes.join(', ')}`
+      });
+    }
+
+    // Validate replyTo if provided
+    if (replyTo) {
+      const replyToMessage = await Message.findById(replyTo);
+      if (!replyToMessage || replyToMessage.chat.toString() !== chatId) {
+        return res.status(400).json({
+          success: false,
+          message: 'Invalid reply message reference'
+        });
+      }
+    }
+
+    // Create new message
+    const messageData = {
+      chat: chatId,
+      sender: userId,
+      content: content.trim(),
+      type
+    };
+
+    if (replyTo) {
+      messageData.replyTo = replyTo;
+    }
+
+    if (attachments && Array.isArray(attachments) && attachments.length > 0) {
+      messageData.attachments = attachments;
+    }
+
+    const message = new Message(messageData);
+    await message.save();
+
+    // Populate message details
+    await message.populate('sender', 'name email role profileImage');
+    if (replyTo) {
+      await message.populate('replyTo', 'content sender');
+      await message.populate('replyTo.sender', 'name role');
+    }
+
+    // Update chat's last message (this is also done in Message pre-save hook, but we do it here for immediate response)
+    chat.lastMessage = {
+      content: message.content,
+      sender: userId,
+      timestamp: message.createdAt
+    };
+    await chat.save();
+
+    // Increment unread counts for other participants
+    await chat.incrementUnreadCount(userId);
+
+    // Emit WebSocket event for real-time updates (if socket service is available)
+    try {
+      const socketService = require('../services/socketService');
+      if (socketService && socketService.io) {
+        // Emit to chat room
+        socketService.io.to(`chat_${chatId}`).emit('new_message', {
+          message: {
+            _id: message._id,
+            content: message.content,
+            type: message.type,
+            sender: message.sender,
+            replyTo: message.replyTo,
+            attachments: message.attachments,
+            createdAt: message.createdAt,
+            updatedAt: message.updatedAt
+          },
+          chatId
+        });
+
+        // Emit unread count updates to participants
+        for (const participant of chat.participants) {
+          if (participant.user._id.toString() !== userId.toString()) {
+            const unreadCount = chat.getUnreadCount(participant.user._id);
+            socketService.io.to(`user_${participant.user._id}`).emit('unread_count_update', {
+              chatId,
+              unreadCount
+            });
+          }
+        }
+      }
+    } catch (socketError) {
+      console.error('WebSocket notification error:', socketError);
+      // Don't fail the request if WebSocket fails
+    }
+
+    res.status(201).json({
+      success: true,
+      message: 'Message sent successfully',
+      data: message
+    });
+  } catch (error) {
+    console.error('Error sending message:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to send message',
+      error: error.message
+    });
+  }
+});
+
+// @desc    Update/Edit a message
+// @route   PUT /api/chats/:chatId/messages/:messageId
+// @access  Private
+router.put('/:chatId/messages/:messageId', protect, async (req, res) => {
+  try {
+    const { chatId, messageId } = req.params;
+    const { content } = req.body;
+    const userId = req.user._id;
+
+    // Validate content
+    if (!content || !content.trim()) {
+      return res.status(400).json({
+        success: false,
+        message: 'Message content is required'
+      });
+    }
+
+    // Find the message
+    const message = await Message.findById(messageId).populate('sender', 'name email role profileImage');
+    if (!message) {
+      return res.status(404).json({
+        success: false,
+        message: 'Message not found'
+      });
+    }
+
+    // Verify message belongs to the specified chat
+    if (message.chat.toString() !== chatId) {
+      return res.status(400).json({
+        success: false,
+        message: 'Message does not belong to this chat'
+      });
+    }
+
+    // Verify message is not deleted
+    if (message.deletedAt) {
+      return res.status(400).json({
+        success: false,
+        message: 'Cannot edit a deleted message'
+      });
+    }
+
+    // Verify user is the sender
+    if (message.sender._id.toString() !== userId.toString()) {
+      return res.status(403).json({
+        success: false,
+        message: 'Only the sender can edit the message'
+      });
+    }
+
+    // System messages cannot be edited
+    if (message.type === 'system') {
+      return res.status(400).json({
+        success: false,
+        message: 'System messages cannot be edited'
+      });
+    }
+
+    // Edit the message using the model method
+    await message.editMessage(content.trim(), userId);
+
+    // Populate message details
+    await message.populate('replyTo', 'content sender');
+    if (message.replyTo) {
+      await message.populate('replyTo.sender', 'name role');
+    }
+
+    // Update chat's last message if this was the last message
+    const chat = await Chat.findById(chatId);
+    if (chat && chat.lastMessage && chat.lastMessage.sender.toString() === userId.toString()) {
+      const lastMessage = await Message.findOne({ chat: chatId, deletedAt: { $exists: false } })
+        .sort({ createdAt: -1 })
+        .limit(1);
+      
+      if (lastMessage && lastMessage._id.toString() === messageId) {
+        chat.lastMessage = {
+          content: message.content,
+          sender: userId,
+          timestamp: message.createdAt
+        };
+        await chat.save();
+      }
+    }
+
+    // Emit WebSocket event for real-time updates
+    try {
+      const socketService = require('../services/socketService');
+      if (socketService && socketService.io) {
+        socketService.io.to(`chat_${chatId}`).emit('message_updated', {
+          message: {
+            _id: message._id,
+            content: message.content,
+            editedAt: message.editedAt,
+            originalContent: message.originalContent,
+            sender: message.sender,
+            replyTo: message.replyTo,
+            attachments: message.attachments,
+            createdAt: message.createdAt,
+            updatedAt: message.updatedAt
+          },
+          chatId
+        });
+      }
+    } catch (socketError) {
+      console.error('WebSocket notification error:', socketError);
+      // Don't fail the request if WebSocket fails
+    }
+
+    res.status(200).json({
+      success: true,
+      message: 'Message updated successfully',
+      data: message
+    });
+  } catch (error) {
+    console.error('Error updating message:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to update message',
+      error: error.message
+    });
+  }
+});
+
+// @desc    Delete a message
+// @route   DELETE /api/chats/:chatId/messages/:messageId
+// @access  Private
+router.delete('/:chatId/messages/:messageId', protect, async (req, res) => {
+  try {
+    const { chatId, messageId } = req.params;
+    const userId = req.user._id;
+
+    // Find the message
+    const message = await Message.findById(messageId).populate('sender', 'name email role profileImage');
+    if (!message) {
+      return res.status(404).json({
+        success: false,
+        message: 'Message not found'
+      });
+    }
+
+    // Verify message belongs to the specified chat
+    if (message.chat.toString() !== chatId) {
+      return res.status(400).json({
+        success: false,
+        message: 'Message does not belong to this chat'
+      });
+    }
+
+    // Verify message is not already deleted
+    if (message.deletedAt) {
+      return res.status(400).json({
+        success: false,
+        message: 'Message is already deleted'
+      });
+    }
+
+    // Verify user is the sender or admin
+    const isSender = message.sender._id.toString() === userId.toString();
+    const isAdmin = req.user.role === 'admin';
+    
+    if (!isSender && !isAdmin) {
+      return res.status(403).json({
+        success: false,
+        message: 'Only the sender or admin can delete the message'
+      });
+    }
+
+    // Delete the message using the model method
+    await message.deleteMessage(userId);
+
+    // Update chat's last message if this was the last message
+    const chat = await Chat.findById(chatId);
+    if (chat && chat.lastMessage) {
+      const lastMessage = await Message.findOne({ chat: chatId, deletedAt: { $exists: false } })
+        .sort({ createdAt: -1 })
+        .limit(1)
+        .populate('sender', 'name role');
+      
+      if (lastMessage) {
+        chat.lastMessage = {
+          content: lastMessage.content,
+          sender: lastMessage.sender._id,
+          timestamp: lastMessage.createdAt
+        };
+      } else {
+        // No messages left, clear last message
+        chat.lastMessage = {
+          content: '',
+          sender: null,
+          timestamp: new Date()
+        };
+      }
+      await chat.save();
+    }
+
+    // Emit WebSocket event for real-time updates
+    try {
+      const socketService = require('../services/socketService');
+      if (socketService && socketService.io) {
+        socketService.io.to(`chat_${chatId}`).emit('message_deleted', {
+          messageId: message._id,
+          chatId,
+          deletedBy: userId
+        });
+      }
+    } catch (socketError) {
+      console.error('WebSocket notification error:', socketError);
+      // Don't fail the request if WebSocket fails
+    }
+
+    res.status(200).json({
+      success: true,
+      message: 'Message deleted successfully'
+    });
+  } catch (error) {
+    console.error('Error deleting message:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to delete message',
       error: error.message
     });
   }
@@ -142,9 +565,9 @@ router.get('/:chatId/messages', protect, async (req, res) => {
     }
 
     const isParticipant = chat.participants.some(p => p.user._id.toString() === userId.toString());
-    const isAdmin = req.user.role === 'admin';
+    // const isAdmin = req.user.role === 'admin'; && !isAdmin
     
-    if (!isParticipant && !isAdmin) {
+    if (!isParticipant ) {
       return res.status(403).json({
         success: false,
         message: 'Not authorized to access this chat'
@@ -179,6 +602,67 @@ router.get('/:chatId/messages', protect, async (req, res) => {
     });
   }
 });
+
+// @desc    Get all chats for a specific event
+// @route   GET /api/chats/event/:eventId
+// @access  Private
+// router.get('/event/:eventId', protect, async (req, res) => {
+//   try {
+//     const { eventId } = req.params;
+//     const { limit = 50, page = 1 } = req.query;
+//     const userId = req.user._id;
+
+//     // Verify event exists
+//     const event = await Event.findById(eventId);
+//     if (!event) {
+//       return res.status(404).json({
+//         success: false,
+//         message: 'Event not found'
+//       });
+//     }
+
+//     // Get chats for this event
+//     const options = {
+//       limit: parseInt(limit),
+//       eventId: eventId
+//     };
+
+//     const chats = await Chat.findUserChats(userId, req.user.role, options);
+    
+//     // Get unread counts for each chat
+//     const chatsWithUnreadCounts = await Promise.all(
+//       chats.map(async (chat) => {
+//         const unreadCount = chat.getUnreadCount(userId);
+//         const chatObj = chat.toObject();
+//         chatObj.unreadCount = unreadCount;
+//         return chatObj;
+//       })
+//     );
+
+//     res.status(200).json({
+//       success: true,
+//       data: chatsWithUnreadCounts,
+//       event: {
+//         _id: event._id,
+//         name: event.name,
+//         date: event.date,
+//         location: event.location
+//       },
+//       pagination: {
+//         page: parseInt(page),
+//         limit: parseInt(limit),
+//         total: chatsWithUnreadCounts.length
+//       }
+//     });
+//   } catch (error) {
+//     console.error('Error fetching chats for event:', error);
+//     res.status(500).json({
+//       success: false,
+//       message: 'Failed to fetch chats for event',
+//       error: error.message
+//     });
+//   }
+// });
 
 // @desc    Get chat details
 // @route   GET /api/chats/:chatId

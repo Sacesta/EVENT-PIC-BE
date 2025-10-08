@@ -51,13 +51,7 @@ router.post('/register', async (req, res) => {
       });
     }
 
-    if (!event.isPublic) {
-      return res.status(403).json({
-        success: false,
-        message: 'This event is not open for public registration'
-      });
-    }
-
+  
     // Check if event has ended
     if (new Date(event.endDate) < new Date()) {
       return res.status(400).json({

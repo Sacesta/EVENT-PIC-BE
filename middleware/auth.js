@@ -3,10 +3,12 @@ const User = require('../models/User');
 
 // Protect routes - verify JWT token
 const protect = async (req, res, next) => {
+
   let token;
 
   if (req.headers.authorization && req.headers.authorization.startsWith('Bearer')) {
     try {
+
       // Get token from header
       token = req.headers.authorization.split(' ')[1];
 
