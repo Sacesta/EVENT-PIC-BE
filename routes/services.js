@@ -15,26 +15,18 @@ const createServiceSchema = Joi.object({
   description: Joi.string().min(10).max(2000).required(),
   category: Joi.string()
     .valid(
-       'photography',          // צלמים
-    'videography',          // וידאו
-    'catering',             // קייטרינג
-    'bar',                  // בר
-    'music',                // מוזיקה
-    'musicians',            // אומנים
-    'decoration',           // תפאורה
-    'scenery',              // scenery / תפאורה
-    'lighting',             // תאורה
-    'sound',                // הגברה
-    'sounds_lights',        // הגברה ותאורה
-    'transportation',       // שירותי הסעות
-    'security',             // אבטחה
-    'first_aid',            // עזרה ראשונה
-    'insurance',            // ביטוח
-    'furniture',            // ריהוט
-    'tents',                // אוהלים
-    'location',             // מקומות להשכרה
-    'dj',                   // DJ
-    'other'      
+      'photography',          // צלמים
+      'catering',             // קייטרינג
+      'bar',                  // בר
+      'musicians',            // אומנים
+      'scenery',              // scenery / תפאורה
+      'sounds_lights',        // הגברה ותאורה
+      'transportation',       // שירותי הסעות
+      'security',             // אבטחה
+      'first_aid',            // עזרה ראשונה
+      'insurance',            // ביטוח
+      'location',             // מקומות להשכרה
+      'dj'                    // DJ
     )
     .required(),
   subcategories: Joi.array().items(Joi.string()).optional(),
@@ -142,25 +134,17 @@ const updateServiceSchema = Joi.object({
   category: Joi.string()
     .valid(
       'photography',          // צלמים
-    'videography',          // וידאו
-    'catering',             // קייטרינג
-    'bar',                  // בר
-    'music',                // מוזיקה
-    'musicians',            // אומנים
-    'decoration',           // תפאורה
-    'scenery',              // scenery / תפאורה
-    'lighting',             // תאורה
-    'sound',                // הגברה
-    'sounds_lights',        // הגברה ותאורה
-    'transportation',       // שירותי הסעות
-    'security',             // אבטחה
-    'first_aid',            // עזרה ראשונה
-    'insurance',            // ביטוח
-    'furniture',            // ריהוט
-    'tents',                // אוהלים
-    'location',             // מקומות להשכרה
-    'dj',                   // DJ
-    'other'      
+      'catering',             // קייטרינג
+      'bar',                  // בר
+      'musicians',            // אומנים
+      'scenery',              // scenery / תפאורה
+      'sounds_lights',        // הגברה ותאורה
+      'transportation',       // שירותי הסעות
+      'security',             // אבטחה
+      'first_aid',            // עזרה ראשונה
+      'insurance',            // ביטוח
+      'location',             // מקומות להשכרה
+      'dj'                    // DJ
     )
     .optional(),
   subcategories: Joi.array().items(Joi.string()).optional(),

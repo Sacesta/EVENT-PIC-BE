@@ -15,7 +15,6 @@ const eventSchema = new mongoose.Schema({
   },
   description: {
     type: String,
-    required: [true, 'Event description is required'],
     maxlength: [2000, 'Description cannot be more than 2000 characters']
   },
   image: {
@@ -86,8 +85,18 @@ const eventSchema = new mongoose.Schema({
   requiredServices: [{
     type: String,
     enum: [
-      'photography', 'videography', 'catering', 'music', 
-      'decoration', 'transportation', 'security',  'lighting' , 'sound', 'furniture', 'tents', 'other'
+      'photography',          // צלמים
+      'catering',             // קייטרינג
+      'bar',                  // בר
+      'musicians',            // אומנים
+      'scenery',              // scenery / תפאורה
+      'sounds_lights',        // הגברה ותאורה
+      'transportation',       // שירותי הסעות
+      'security',             // אבטחה
+      'first_aid',            // עזרה ראשונה
+      'insurance',            // ביטוח
+      'location',             // מקומות להשכרה
+      'dj'                    // DJ
     ]
   }],
   // Enhanced suppliers structure to support multiple services per supplier

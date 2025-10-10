@@ -52,25 +52,17 @@ category: {
   required: [true, 'Service category is required'],
   enum: [
     'photography',          // צלמים
-    'videography',          // וידאו
     'catering',             // קייטרינג
     'bar',                  // בר
-    'music',                // מוזיקה
     'musicians',            // אומנים
-    'decoration',           // תפאורה
     'scenery',              // scenery / תפאורה
-    'lighting',             // תאורה
-    'sound',                // הגברה
     'sounds_lights',        // הגברה ותאורה
     'transportation',       // שירותי הסעות
     'security',             // אבטחה
     'first_aid',            // עזרה ראשונה
     'insurance',            // ביטוח
-    'furniture',            // ריהוט
-    'tents',                // אוהלים
     'location',             // מקומות להשכרה
-    'dj',                   // DJ
-    'other'                 // אחר
+    'dj'                    // DJ
   ]
 }
 ,

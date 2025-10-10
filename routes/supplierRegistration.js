@@ -18,18 +18,18 @@ const supplierRegistrationSchema = Joi.object({
   services: Joi.array().items(
     Joi.object({
       category: Joi.string().valid(
-        'photography', 'videography', 'catering', 'music', 
-        'decoration', 'transportation', 'security', 'lighting',
-        'sound', 'furniture', 'tents', 'other'
+        'photography', 'catering', 'bar', 'musicians',
+        'scenery', 'sounds_lights', 'transportation', 'security',
+        'first_aid', 'insurance', 'location', 'dj'
       ).required()
     })
   ).min(1).optional(),
   
   serviceCategories: Joi.array().items(
     Joi.string().valid(
-      'photography', 'videography', 'catering', 'music', 
-      'decoration', 'transportation', 'security', 'lighting',
-      'sound', 'furniture', 'tents', 'other'
+      'photography', 'catering', 'bar', 'musicians',
+      'scenery', 'sounds_lights', 'transportation', 'security',
+      'first_aid', 'insurance', 'location', 'dj'
     )
   ).min(1).optional(),
 
@@ -48,17 +48,10 @@ const supplierRegistrationSchema = Joi.object({
 // Available service categories (matching Service model enum values)
 const SERVICE_CATEGORIES_INFO = {
   photography: {
-    name: { en: 'Photography', he: 'צילום' },
+    name: { en: 'Photography', he: 'צלמים' },
     description: { 
       en: 'Event photography, portraits, commercial photography', 
       he: 'צילום אירועים, פורטרטים, צילום מסחרי' 
-    }
-  },
-  videography: {
-    name: { en: 'Videography', he: 'וידאו' },
-    description: { 
-      en: 'Event videography, promotional videos, documentaries', 
-      he: 'צילום וידאו לאירועים, סרטוני תדמית, דוקומנטרי' 
     }
   },
   catering: {
@@ -68,25 +61,39 @@ const SERVICE_CATEGORIES_INFO = {
       he: 'קייטרינג לאירועים, תכנון ארוחות, שירותי מזון' 
     }
   },
-  music: {
-    name: { en: 'Music', he: 'מוזיקה' },
+  bar: {
+    name: { en: 'Bar Services', he: 'בר' },
     description: { 
-      en: 'DJ services, live music, sound equipment rental', 
-      he: 'שירותי די-ג׳יי, מוזיקה חיה, השכרת ציוד סאונד' 
+      en: 'Bartenders, cocktail service, bar setup for events', 
+      he: 'ברמנים, שירות קוקטיילים, הקמת בר לאירועים' 
     }
   },
-  decoration: {
-    name: { en: 'Decoration', he: 'עיצוב' },
+  musicians: {
+    name: { en: 'Musicians', he: 'אומנים' },
     description: { 
-      en: 'Event decoration, floral arrangements, theme setup', 
-      he: 'עיצוב אירועים, סידורי פרחים, עיצוב נושא' 
+      en: 'Live bands, singers, instrumentalists for events', 
+      he: 'להקות חיות, זמרים, נגנים לאירועים' 
+    }
+  },
+  scenery: {
+    name: { en: 'Scenery', he: 'תפאורה' },
+    description: { 
+      en: 'Stage and scenery design for events and performances', 
+      he: 'עיצוב במה ותפאורה לאירועים והופעות' 
+    }
+  },
+  sounds_lights: {
+    name: { en: 'Sounds & Lights', he: 'הגברה ותאורה' },
+    description: { 
+      en: 'Sound systems, lighting design, stage effects', 
+      he: 'מערכות הגברה, תאורת במה, אפקטים לאירועים' 
     }
   },
   transportation: {
-    name: { en: 'Transportation', he: 'תחבורה' },
+    name: { en: 'Transportation', he: 'שירותי הסעות' },
     description: { 
       en: 'Event transportation, logistics, vehicle rental', 
-      he: 'תחבורה לאירועים, לוגיסטיקה, השכרת רכבים' 
+      he: 'הסעות לאירועים, לוגיסטיקה, השכרת רכבים' 
     }
   },
   security: {
@@ -96,42 +103,37 @@ const SERVICE_CATEGORIES_INFO = {
       he: 'אבטחת אירועים, שליטה בקהל, שירותי בטיחות' 
     }
   },
-  lighting: {
-    name: { en: 'Lighting', he: 'תאורה' },
+  first_aid: {
+    name: { en: 'First Aid', he: 'עזרה ראשונה' },
     description: { 
-      en: 'Event lighting, stage lighting, ambient lighting', 
-      he: 'תאורת אירועים, תאורת במה, תאורה סביבתית' 
+      en: 'Medical staff and emergency first aid for events', 
+      he: 'צוותים רפואיים ועזרה ראשונה לאירועים' 
     }
   },
-  sound: {
-    name: { en: 'Sound', he: 'סאונד' },
+  insurance: {
+    name: { en: 'Insurance', he: 'ביטוח' },
     description: { 
-      en: 'Sound systems, audio equipment, microphones', 
-      he: 'מערכות סאונד, ציוד שמע, מיקרופונים' 
+      en: 'Event insurance and liability coverage services', 
+      he: 'ביטוח אירועים ושירותי כיסוי אחריות' 
     }
   },
-  furniture: {
-    name: { en: 'Furniture', he: 'רהיטים' },
+  location: {
+    name: { en: 'Locations', he: 'מקומות להשכרה' },
     description: { 
-      en: 'Event furniture, seating, tables, decor furniture', 
-      he: 'רהיטים לאירועים, מקומות ישיבה, שולחנות, ריהוט דקורטיבי' 
+      en: 'Venues, event spaces, and rental locations', 
+      he: 'אולמות, מקומות פתוחים וחללים להשכרה לאירועים' 
     }
   },
-  tents: {
-    name: { en: 'Tents', he: 'אוהלים' },
+  dj: {
+    name: { en: 'DJ', he: 'די ג׳יי' },
     description: { 
-      en: 'Event tents, canopies, outdoor structures', 
-      he: 'אוהלים לאירועים, סככות, מבנים חיצוניים' 
-    }
-  },
-  other: {
-    name: { en: 'Other Services', he: 'שירותים אחרים' },
-    description: { 
-      en: 'Specialized services not listed above', 
-      he: 'שירותים מיוחדים שאינם מופיעים ברשימה' 
+      en: 'Professional DJ services for events and parties', 
+      he: 'שירותי די ג׳יי מקצועיים לאירועים ומסיבות' 
     }
   }
 };
+
+
 
 
 // @desc    Get available service categories (without predefined packages)
@@ -257,7 +259,7 @@ router.post('/register', async (req, res) => {
             serviceRadius: 50
           },
           experience: supplier.supplierDetails.experience,
-          status: 'pending_approval', // Match supplier verification status
+          status: 'avtive', // Match supplier verification status
           available: false, // Not available until approved and details are filled
           portfolio: portfolio && portfolio.length > 0 ? portfolio.map(url => ({
             image: url,
@@ -322,9 +324,29 @@ router.post('/register', async (req, res) => {
 
   } catch (error) {
     console.error('Supplier registration error:', error);
+    
+    // Handle Mongoose validation errors
+    if (error.name === 'ValidationError') {
+      const errors = Object.values(error.errors).map(err => err.message);
+      return res.status(400).json({
+        success: false,
+        message: errors[0] || 'Validation error',
+        errors: errors
+      });
+    }
+    
+    // Handle duplicate key errors (e.g., email already exists)
+    if (error.code === 11000) {
+      return res.status(400).json({
+        success: false,
+        message: 'User already exists with this email'
+      });
+    }
+    
+    // Generic server error
     res.status(500).json({
       success: false,
-      message: 'Server error during registration'
+      message: error.message || 'Server error during registration'
     });
   }
 });

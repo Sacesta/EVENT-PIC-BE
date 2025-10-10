@@ -511,7 +511,7 @@ class EmailService {
         </div>
         
         <div style="text-align: center;">
-          <a href="${process.env.FRONTEND_URL}/supplier/dashboard" class="button" style="background: linear-gradient(to right, ${this.colors.secondaryGreen}, ${this.colors.primaryLight});">Access Your Dashboard</a>
+          <a href="${process.env.FRONTEND_URL} class="button" style="background: linear-gradient(to right, ${this.colors.secondaryGreen}, ${this.colors.primaryLight});">Access Your Dashboard</a>
         </div>
         
         <p>We're excited to have you as part of the PIC community! If you have any questions or need assistance getting started, our support team is here to help.</p>
@@ -889,9 +889,7 @@ class EmailService {
           </ul>
         </div>
         
-        <div style="text-align: center;">
-          <a href="${process.env.FRONTEND_URL}/suppliers?category=${service.category}" class="button">Find Suppliers</a>
-        </div>
+   
         
         <p>Need help finding the right supplier? Our support team is here to assist you!</p>
       </div>

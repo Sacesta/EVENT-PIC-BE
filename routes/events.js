@@ -12,7 +12,7 @@ const router = express.Router();
 // Enhanced validation schemas
 const createEventSchema = Joi.object({
   name: Joi.string().min(2).max(200).required(),
-  description: Joi.string().min(10).max(2000).optional(),
+  description: Joi.string().max(2000).allow('').optional(),
   image: Joi.any().optional(),
   password: Joi.string().min(6).optional().messages({
     'string.min': 'Password must be at least 6 characters long'
@@ -27,9 +27,27 @@ const createEventSchema = Joi.object({
       lng: Joi.number().min(-180).max(180).optional()
     }).optional()
   }).required(),
+
+  
   language: Joi.string().valid('he', 'en', 'ar').default('he'),
   category: Joi.string().valid(
- 'photography',          // צלמים
+    'birthday',
+    'wedding',
+    'corporate',
+    'conference',
+    'workshop',
+    'concert',
+    'festival',
+    'graduation',
+    'anniversary',
+    'baby-shower',
+    'networking',
+    'charity',
+    'other'
+  ).required(),
+
+  requiredServices: Joi.array().items(Joi.string().valid(
+    'photography',          // צלמים
     'videography',          // וידאו
     'catering',             // קייטרינג
     'bar',                  // בר
@@ -49,11 +67,6 @@ const createEventSchema = Joi.object({
     'location',             // מקומות להשכרה
     'dj',                   // DJ
     'other'      
-).required(),
-
-  requiredServices: Joi.array().items(Joi.string().valid(
-       'photography', 'videography', 'catering', 'music', 
-      'decoration', 'transportation', 'security', 'lighting', 'sound', 'furniture', 'tents', 'other'
   )).optional(),
   // Enhanced suppliers array to handle multiple services per supplier with package selection
   // Supports both nested (new) and flat (legacy) structures
@@ -65,7 +78,7 @@ const createEventSchema = Joi.object({
         services: Joi.array().items(Joi.object({
           serviceId: Joi.string().required(),
           selectedPackageId: Joi.string().optional(),
-          packageDetails: Joi.object({
+          packageDetails: Joi.object({ 
             name: Joi.string().optional(),
             description: Joi.string().optional(),
             price: Joi.number().min(0).optional(),
@@ -161,7 +174,7 @@ const createEventSchema = Joi.object({
 
 const updateEventSchema = Joi.object({
   name: Joi.string().min(2).max(200).optional(),
-  description: Joi.string().min(10).max(2000).optional(),
+  description: Joi.string().max(2000).allow('').optional(),
   image: Joi.any().optional(),
   password: Joi.string().min(6).optional().messages({
     'string.min': 'Password must be at least 6 characters long'
@@ -178,7 +191,22 @@ const updateEventSchema = Joi.object({
   }).optional(),
   language: Joi.string().valid('he', 'en', 'ar').optional(),
   category: Joi.string().valid(
-    'photography',          // צלמים
+    'birthday',
+    'wedding',
+    'corporate',
+    'conference',
+    'workshop',
+    'concert',
+    'festival',
+    'graduation',
+    'anniversary',
+    'baby-shower',
+    'networking',
+    'charity',
+    'other'
+  ).optional(),
+  requiredServices: Joi.array().items(Joi.string().valid(
+      'photography',          // צלמים
     'videography',          // וידאו
     'catering',             // קייטרינג
     'bar',                  // בר
@@ -198,10 +226,6 @@ const updateEventSchema = Joi.object({
     'location',             // מקומות להשכרה
     'dj',                   // DJ
     'other'      
-  ).optional(),
-  requiredServices: Joi.array().items(Joi.string().valid(
-       'photography', 'videography', 'catering', 'music', 
-      'decoration', 'transportation', 'security', 'lighting' , 'sound', 'furniture', 'tents', 'other'
   )).optional(),
   // Supports both nested (new) and flat (legacy) structures with package selection
   // Also handles populated objects from frontend
