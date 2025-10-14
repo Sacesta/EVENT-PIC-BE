@@ -35,6 +35,32 @@ const eventSchema = new mongoose.Schema({
     type: Date,
     required: [true, 'End date is required']
   },
+  startTime: {
+    type: String,
+    required: [true, 'Start time is required'],
+    validate: {
+      validator: function(value) {
+        // Validate time format: HH:MM (24-hour) or HH:MM AM/PM (12-hour)
+        const time24Regex = /^([0-1]?[0-9]|2[0-3]):[0-5][0-9]$/;
+        const time12Regex = /^(0?[1-9]|1[0-2]):[0-5][0-9]\s?(AM|PM|am|pm)$/;
+        return time24Regex.test(value) || time12Regex.test(value);
+      },
+      message: 'Start time must be in valid format (HH:MM or HH:MM AM/PM)'
+    }
+  },
+  endTime: {
+    type: String,
+    required: [true, 'End time is required'],
+    validate: {
+      validator: function(value) {
+        // Validate time format: HH:MM (24-hour) or HH:MM AM/PM (12-hour)
+        const time24Regex = /^([0-1]?[0-9]|2[0-3]):[0-5][0-9]$/;
+        const time12Regex = /^(0?[1-9]|1[0-2]):[0-5][0-9]\s?(AM|PM|am|pm)$/;
+        return time24Regex.test(value) || time12Regex.test(value);
+      },
+      message: 'End time must be in valid format (HH:MM or HH:MM AM/PM)'
+    }
+  },
   location: {
     address: {
       type: String,
