@@ -1,9 +1,12 @@
 const express = require("express");
 const Joi = require("joi");
+const multer = require("multer");
 const Event = require("../models/Event");
 const User = require("../models/User");
 const Service = require("../models/Service");
 const Order = require("../models/Order");
+const path = require("path");
+const fs = require("fs"); 
 const {
   protect,
   authorize,
@@ -13,6 +16,26 @@ const Ticket = require("../models/Ticket");
 const emailService = require("../services/emailService");
 const router = express.Router();
 
+// Ensure upload folder exists
+const uploadFolder = path.join(process.cwd(), "uploads/events");
+if (!fs.existsSync(uploadFolder)) {
+  fs.mkdirSync(uploadFolder, { recursive: true });
+}
+
+// Multer setup for disk storage
+const storage = multer.diskStorage({
+  destination: (req, file, cb) => {
+    cb(null, uploadFolder);
+  },
+  filename: (req, file, cb) => {
+    const uniqueSuffix = Date.now() + "-" + Math.round(Math.random() * 1e9);
+    const ext = path.extname(file.originalname);
+    cb(null, file.fieldname + "-" + uniqueSuffix + ext);
+  },
+});
+
+const upload = multer({ storage });
+
 // Enhanced validation schemas
 const timePattern24 = /^([0-1]?[0-9]|2[0-3]):[0-5][0-9]$/; // HH:MM 24h
 const timePattern12 = /^(0?[1-9]|1[0-2]):[0-5][0-9]\s?(AM|PM|am|pm)$/; // HH:MM AM/PM
@@ -21,555 +44,154 @@ const timePattern = /^([0-1]?[0-9]|2[0-3]):[0-5][0-9]$/; // HH:MM 24h
 const createEventSchema = Joi.object({
   name: Joi.string().min(2).max(200).required(),
   description: Joi.string().max(2000).allow("").optional(),
-
   image: Joi.any().optional(),
   password: Joi.string().min(6).optional().messages({
     "string.min": "Password must be at least 6 characters long",
   }),
+
   startDate: Joi.date().required().messages({
     "date.base": "Start date must be a valid date",
     "any.required": "Start date is required",
   }),
   startTime: Joi.string().pattern(timePattern).required().messages({
     "string.pattern.base": "Start time must be in HH:MM format (e.g., 14:30)",
-    "any.required": "Start time is required",
   }),
   endDate: Joi.date().required().messages({
     "date.base": "End date must be a valid date",
-    "any.required": "End date is required",
   }),
   endTime: Joi.string().pattern(timePattern).required().messages({
     "string.pattern.base": "End time must be in HH:MM format (e.g., 18:00)",
-    "any.required": "End time is required",
   }),
+
   location: Joi.object({
     address: Joi.string().required(),
     city: Joi.string().required(),
     coordinates: Joi.object({
-      lat: Joi.number().min(-90).max(90).optional(),
-      lng: Joi.number().min(-180).max(180).optional(),
+      lat: Joi.number().min(-90).max(90),
+      lng: Joi.number().min(-180).max(180),
     }).optional(),
   }).required(),
 
   language: Joi.string().valid("he", "en", "ar").default("he"),
-  category: Joi.string()
-    .valid(
-      "birthday",
-      "wedding",
-      "corporate",
-      "conference",
-      "workshop",
-      "concert",
-      "festival",
-      "graduation",
-      "anniversary",
-      "baby-shower",
-      "networking",
-      "charity",
-      "other"
-    )
-    .required(),
+  category: Joi.string().valid(
+    "birthday", "wedding", "corporate", "conference", "workshop",
+    "concert", "festival", "graduation", "anniversary", "baby-shower",
+    "networking", "charity", "other"
+  ).required(),
 
-  requiredServices: Joi.array()
-    .items(
-      Joi.string().valid(
-        "photography", // צלמים
-        "videography", // וידאו
-        "catering", // קייטרינג
-        "bar", // בר
-        "music", // מוזיקה
-        "musicians", // אומנים
-        "decoration", // תפאורה
-        "scenery", // scenery / תפאורה
-        "lighting", // תאורה
-        "sound", // הגברה
-        "sounds_lights", // הגברה ותאורה
-        "transportation", // שירותי הסעות
-        "security", // אבטחה
-        "first_aid", // עזרה ראשונה
-        "insurance", // ביטוח
-        "furniture", // ריהוט
-        "tents", // אוהלים
-        "location", // מקומות להשכרה
-        "dj", // DJ
-        "other"
-      )
+  requiredServices: Joi.array().items(
+    Joi.string().valid(
+      "photography", "videography", "catering", "bar", "music", "musicians",
+      "decoration", "scenery", "lighting", "sound", "sounds_lights",
+      "transportation", "security", "first_aid", "insurance",
+      "furniture", "tents", "location", "dj", "other"
     )
-    .optional(),
-  // Enhanced suppliers array to handle multiple services per supplier with package selection
-  // Supports both nested (new) and flat (legacy) structures
-  suppliers: Joi.array()
-    .items(
-      Joi.alternatives().try(
-        // New nested structure: suppliers[0].services[0].serviceId
-        Joi.object({
-          supplierId: Joi.string().required(),
-          services: Joi.array()
-            .items(
-              Joi.object({
-                serviceId: Joi.string().required(),
-                selectedPackageId: Joi.string().optional(),
-                packageDetails: Joi.object({
-                  name: Joi.string().optional(),
-                  description: Joi.string().optional(),
-                  price: Joi.number().min(0).optional(),
-                  features: Joi.array().items(Joi.string()).optional(),
-                  duration: Joi.number().optional(),
-                }).optional(),
-                requestedPrice: Joi.number().min(0).optional(),
-                notes: Joi.string().max(500).optional(),
-                priority: Joi.string()
-                  .valid("low", "medium", "high")
-                  .default("medium"),
-              })
-            )
-            .min(1)
-            .required(),
-        }),
-        // Legacy flat structure: suppliers[0].serviceId
-        Joi.object({
-          supplierId: Joi.string().required(),
-          serviceId: Joi.string().required(),
-          selectedPackageId: Joi.string().optional(),
-          packageDetails: Joi.object({
-            name: Joi.string().optional(),
-            description: Joi.string().optional(),
-            price: Joi.number().min(0).optional(),
-            features: Joi.array().items(Joi.string()).optional(),
-            duration: Joi.number().optional(),
-          }).optional(),
-          requestedPrice: Joi.number().min(0).optional(),
-          notes: Joi.string().max(500).optional(),
-          priority: Joi.string()
-            .valid("low", "medium", "high")
-            .default("medium"),
-        })
-      )
+  ).optional(),
+
+  suppliers: Joi.array().items(
+    Joi.alternatives().try(
+      Joi.object({
+        supplierId: Joi.string().required(),
+        services: Joi.array().items(
+          Joi.object({
+            serviceId: Joi.string().required(),
+            selectedPackageId: Joi.string().optional(),
+            packageDetails: Joi.object({
+              name: Joi.string(),
+              description: Joi.string(),
+              price: Joi.number().min(0),
+              features: Joi.array().items(Joi.string()),
+              duration: Joi.number(),
+            }).optional(),
+            requestedPrice: Joi.number().min(0).optional(),
+            notes: Joi.string().max(500).optional(),
+            priority: Joi.string().valid("low", "medium", "high").default("medium"),
+          })
+        ).min(1).required(),
+      }),
+      Joi.object({
+        supplierId: Joi.string().required(),
+        serviceId: Joi.string().required(),
+        selectedPackageId: Joi.string().optional(),
+        packageDetails: Joi.object({
+          name: Joi.string(),
+          description: Joi.string(),
+          price: Joi.number().min(0),
+          features: Joi.array().items(Joi.string()),
+          duration: Joi.number(),
+        }).optional(),
+        requestedPrice: Joi.number().min(0).optional(),
+        notes: Joi.string().max(500).optional(),
+        priority: Joi.string().valid("low", "medium", "high").default("medium"),
+      })
     )
-    .optional(),
+  ).optional(),
+
   isPublic: Joi.boolean().default(false),
+
   ticketInfo: Joi.object({
     availableTickets: Joi.number().min(0).required(),
     soldTickets: Joi.number().min(0).optional(),
     reservedTickets: Joi.number().min(0).optional(),
     priceRange: Joi.object({
-      min: Joi.number().min(0).optional(),
-      max: Joi.number().min(0).optional(),
+      min: Joi.number().min(0),
+      max: Joi.number().min(0),
     }).optional(),
     isFree: Joi.boolean().optional(),
   }).optional(),
-  tickets: Joi.array()
-    .items(
-      Joi.alternatives().try(
-        // New simplified format
-        Joi.object({
-          title: Joi.string().max(200).required(),
-          description: Joi.string().max(1000).optional(),
-          type: Joi.string().max(100).required(),
-          price: Joi.number().min(0).required(),
-          currency: Joi.string()
-            .valid("ILS", "USD", "EUR")
-            .default("ILS")
-            .optional(),
-          quantity: Joi.number().min(1).required(),
-        }),
-        // Legacy nested format (for backward compatibility)
-        Joi.object({
-          title: Joi.string().max(200).required(),
-          description: Joi.string().max(1000).optional(),
-          type: Joi.string().max(100).required(),
-          price: Joi.object({
-            amount: Joi.number().min(0).required(),
-            currency: Joi.string()
-              .valid("ILS", "USD", "EUR")
-              .default("ILS")
-              .optional(),
-            originalPrice: Joi.number().min(0).optional().allow(null),
-            discount: Joi.number().min(0).max(100).optional().allow(null),
-          }).required(),
-          quantity: Joi.alternatives()
-            .try(
-              Joi.number().min(1).required(),
-              Joi.object({
-                total: Joi.number().min(1).required(),
-                available: Joi.number().min(1).required(),
-                sold: Joi.number().optional(),
-                reserved: Joi.number().optional(),
-              }).required()
-            )
-            .required(),
-          restrictions: Joi.object({
-            ageLimit: Joi.object({
-              min: Joi.number().min(0).optional(),
-              max: Joi.number().min(0).optional(),
-            }).optional(),
-            maxPerPerson: Joi.number().min(1).optional(),
-            requiresId: Joi.boolean().optional(),
-            specialRequirements: Joi.string().optional(),
+
+  tickets: Joi.array().items(
+    Joi.alternatives().try(
+      Joi.object({
+        title: Joi.string().max(200).required(),
+        description: Joi.string().max(1000).optional(),
+        type: Joi.string().max(100).required(),
+        price: Joi.number().min(0).required(),
+        currency: Joi.string().valid("ILS", "USD", "EUR").default("ILS"),
+        quantity: Joi.number().min(1).required(),
+      }),
+      Joi.object({
+        title: Joi.string().max(200).required(),
+        description: Joi.string().max(1000).optional(),
+        type: Joi.string().max(100).required(),
+        price: Joi.object({
+          amount: Joi.number().min(0).required(),
+          currency: Joi.string().valid("ILS", "USD", "EUR").default("ILS"),
+          originalPrice: Joi.number().min(0).optional().allow(null),
+          discount: Joi.number().min(0).max(100).optional().allow(null),
+        }).required(),
+        quantity: Joi.alternatives().try(
+          Joi.number().min(1).required(),
+          Joi.object({
+            total: Joi.number().min(1).required(),
+            available: Joi.number().min(1).required(),
+            sold: Joi.number().optional(),
+            reserved: Joi.number().optional(),
+          }).required()
+        ).required(),
+        restrictions: Joi.object({
+          ageLimit: Joi.object({
+            min: Joi.number().min(0),
+            max: Joi.number().min(0),
           }).optional(),
-        })
-      )
+          maxPerPerson: Joi.number().min(1).optional(),
+          requiresId: Joi.boolean().optional(),
+          specialRequirements: Joi.string().optional(),
+        }).optional(),
+      })
     )
-    .optional(),
+  ).optional(),
+
   tags: Joi.array().items(Joi.string()).optional(),
-  featured: Joi.boolean().default(false).optional(),
-  status: Joi.string()
-    .valid("draft", "approved", "rejected", "completed")
-    .optional(),
+  featured: Joi.boolean().default(false),
+  status: Joi.string().valid("draft", "approved", "rejected", "completed").optional(),
   budget: Joi.object({
     total: Joi.number().min(0).optional(),
-    allocated: Joi.object()
-      .pattern(Joi.string(), Joi.number().min(0))
-      .optional(),
-    spent: Joi.number().min(0).optional(),
-  }).optional(),
-
-  language: Joi.string().valid("he", "en", "ar").default("he"),
-  category: Joi.string()
-    .valid(
-      "birthday",
-      "wedding",
-      "corporate",
-      "conference",
-      "workshop",
-      "concert",
-      "festival",
-      "graduation",
-      "anniversary",
-      "baby-shower",
-      "networking",
-      "charity",
-      "other"
-    )
-    .required(),
-
-  requiredServices: Joi.array()
-    .items(
-      Joi.string().valid(
-        "photography", // צלמים
-        "videography", // וידאו
-        "catering", // קייטרינג
-        "bar", // בר
-        "music", // מוזיקה
-        "musicians", // אומנים
-        "decoration", // תפאורה
-        "scenery", // scenery / תפאורה
-        "lighting", // תאורה
-        "sound", // הגברה
-        "sounds_lights", // הגברה ותאורה
-        "transportation", // שירותי הסעות
-        "security", // אבטחה
-        "first_aid", // עזרה ראשונה
-        "insurance", // ביטוח
-        "furniture", // ריהוט
-        "tents", // אוהלים
-        "location", // מקומות להשכרה
-        "dj", // DJ
-        "other"
-      )
-    )
-    .optional(),
-  // Enhanced suppliers array to handle multiple services per supplier with package selection
-  // Supports both nested (new) and flat (legacy) structures
-  suppliers: Joi.array()
-    .items(
-      Joi.alternatives().try(
-        // New nested structure: suppliers[0].services[0].serviceId
-        Joi.object({
-          supplierId: Joi.string().required(),
-          services: Joi.array()
-            .items(
-              Joi.object({
-                serviceId: Joi.string().required(),
-                selectedPackageId: Joi.string().optional(),
-                packageDetails: Joi.object({
-                  name: Joi.string().optional(),
-                  description: Joi.string().optional(),
-                  price: Joi.number().min(0).optional(),
-                  features: Joi.array().items(Joi.string()).optional(),
-                  duration: Joi.number().optional(),
-                }).optional(),
-                requestedPrice: Joi.number().min(0).optional(),
-                notes: Joi.string().max(500).optional(),
-                priority: Joi.string()
-                  .valid("low", "medium", "high")
-                  .default("medium"),
-              })
-            )
-            .min(1)
-            .required(),
-        }),
-        // Legacy flat structure: suppliers[0].serviceId
-        Joi.object({
-          supplierId: Joi.string().required(),
-          serviceId: Joi.string().required(),
-          selectedPackageId: Joi.string().optional(),
-          packageDetails: Joi.object({
-            name: Joi.string().optional(),
-            description: Joi.string().optional(),
-            price: Joi.number().min(0).optional(),
-            features: Joi.array().items(Joi.string()).optional(),
-            duration: Joi.number().optional(),
-          }).optional(),
-          requestedPrice: Joi.number().min(0).optional(),
-          notes: Joi.string().max(500).optional(),
-          priority: Joi.string()
-            .valid("low", "medium", "high")
-            .default("medium"),
-        })
-      )
-    )
-    .optional(),
-  isPublic: Joi.boolean().default(false),
-  ticketInfo: Joi.object({
-    availableTickets: Joi.number().min(0).required(),
-    soldTickets: Joi.number().min(0).optional(),
-    reservedTickets: Joi.number().min(0).optional(),
-    priceRange: Joi.object({
-      min: Joi.number().min(0).optional(),
-      max: Joi.number().min(0).optional(),
-    }).optional(),
-    isFree: Joi.boolean().optional(),
-  }).optional(),
-  tickets: Joi.array()
-    .items(
-      Joi.alternatives().try(
-        // New simplified format
-        Joi.object({
-          title: Joi.string().max(200).required(),
-          description: Joi.string().max(1000).optional(),
-          type: Joi.string().max(100).required(),
-          price: Joi.number().min(0).required(),
-          currency: Joi.string()
-            .valid("ILS", "USD", "EUR")
-            .default("ILS")
-            .optional(),
-          quantity: Joi.number().min(1).required(),
-        }),
-        // Legacy nested format (for backward compatibility)
-        Joi.object({
-          title: Joi.string().max(200).required(),
-          description: Joi.string().max(1000).optional(),
-          type: Joi.string().max(100).required(),
-          price: Joi.object({
-            amount: Joi.number().min(0).required(),
-            currency: Joi.string()
-              .valid("ILS", "USD", "EUR")
-              .default("ILS")
-              .optional(),
-            originalPrice: Joi.number().min(0).optional().allow(null),
-            discount: Joi.number().min(0).max(100).optional().allow(null),
-          }).required(),
-          quantity: Joi.alternatives()
-            .try(
-              Joi.number().min(1).required(),
-              Joi.object({
-                total: Joi.number().min(1).required(),
-                available: Joi.number().min(1).required(),
-                sold: Joi.number().optional(),
-                reserved: Joi.number().optional(),
-              }).required()
-            )
-            .required(),
-          restrictions: Joi.object({
-            ageLimit: Joi.object({
-              min: Joi.number().min(0).optional(),
-              max: Joi.number().min(0).optional(),
-            }).optional(),
-            maxPerPerson: Joi.number().min(1).optional(),
-            requiresId: Joi.boolean().optional(),
-            specialRequirements: Joi.string().optional(),
-          }).optional(),
-        })
-      )
-    )
-    .optional(),
-  tags: Joi.array().items(Joi.string()).optional(),
-  featured: Joi.boolean().default(false).optional(),
-  status: Joi.string()
-    .valid("draft", "approved", "rejected", "completed")
-    .optional(),
-  budget: Joi.object({
-    total: Joi.number().min(0).optional(),
-    allocated: Joi.object()
-      .pattern(Joi.string(), Joi.number().min(0))
-      .optional(),
-    spent: Joi.number().min(0).optional(),
-  }).optional(),
-
-  language: Joi.string().valid("he", "en", "ar").default("he"),
-  category: Joi.string()
-    .valid(
-      "birthday",
-      "wedding",
-      "corporate",
-      "conference",
-      "workshop",
-      "concert",
-      "festival",
-      "graduation",
-      "anniversary",
-      "baby-shower",
-      "networking",
-      "charity",
-      "other"
-    )
-    .required(),
-
-  requiredServices: Joi.array()
-    .items(
-      Joi.string().valid(
-        "photography", // צלמים
-        "videography", // וידאו
-        "catering", // קייטרינג
-        "bar", // בר
-        "music", // מוזיקה
-        "musicians", // אומנים
-        "decoration", // תפאורה
-        "scenery", // scenery / תפאורה
-        "lighting", // תאורה
-        "sound", // הגברה
-        "sounds_lights", // הגברה ותאורה
-        "transportation", // שירותי הסעות
-        "security", // אבטחה
-        "first_aid", // עזרה ראשונה
-        "insurance", // ביטוח
-        "furniture", // ריהוט
-        "tents", // אוהלים
-        "location", // מקומות להשכרה
-        "dj", // DJ
-        "other"
-      )
-    )
-    .optional(),
-  // Enhanced suppliers array to handle multiple services per supplier with package selection
-  // Supports both nested (new) and flat (legacy) structures
-  suppliers: Joi.array()
-    .items(
-      Joi.alternatives().try(
-        // New nested structure: suppliers[0].services[0].serviceId
-        Joi.object({
-          supplierId: Joi.string().required(),
-          services: Joi.array()
-            .items(
-              Joi.object({
-                serviceId: Joi.string().required(),
-                selectedPackageId: Joi.string().optional(),
-                packageDetails: Joi.object({
-                  name: Joi.string().optional(),
-                  description: Joi.string().optional(),
-                  price: Joi.number().min(0).optional(),
-                  features: Joi.array().items(Joi.string()).optional(),
-                  duration: Joi.number().optional(),
-                }).optional(),
-                requestedPrice: Joi.number().min(0).optional(),
-                notes: Joi.string().max(500).optional(),
-                priority: Joi.string()
-                  .valid("low", "medium", "high")
-                  .default("medium"),
-              })
-            )
-            .min(1)
-            .required(),
-        }),
-        // Legacy flat structure: suppliers[0].serviceId
-        Joi.object({
-          supplierId: Joi.string().required(),
-          serviceId: Joi.string().required(),
-          selectedPackageId: Joi.string().optional(),
-          packageDetails: Joi.object({
-            name: Joi.string().optional(),
-            description: Joi.string().optional(),
-            price: Joi.number().min(0).optional(),
-            features: Joi.array().items(Joi.string()).optional(),
-            duration: Joi.number().optional(),
-          }).optional(),
-          requestedPrice: Joi.number().min(0).optional(),
-          notes: Joi.string().max(500).optional(),
-          priority: Joi.string()
-            .valid("low", "medium", "high")
-            .default("medium"),
-        })
-      )
-    )
-    .optional(),
-  isPublic: Joi.boolean().default(false),
-  ticketInfo: Joi.object({
-    availableTickets: Joi.number().min(0).required(),
-    soldTickets: Joi.number().min(0).optional(),
-    reservedTickets: Joi.number().min(0).optional(),
-    priceRange: Joi.object({
-      min: Joi.number().min(0).optional(),
-      max: Joi.number().min(0).optional(),
-    }).optional(),
-    isFree: Joi.boolean().optional(),
-  }).optional(),
-  tickets: Joi.array()
-    .items(
-      Joi.alternatives().try(
-        // New simplified format
-        Joi.object({
-          title: Joi.string().max(200).required(),
-          description: Joi.string().max(1000).optional(),
-          type: Joi.string().max(100).required(),
-          price: Joi.number().min(0).required(),
-          currency: Joi.string()
-            .valid("ILS", "USD", "EUR")
-            .default("ILS")
-            .optional(),
-          quantity: Joi.number().min(1).required(),
-        }),
-        // Legacy nested format (for backward compatibility)
-        Joi.object({
-          title: Joi.string().max(200).required(),
-          description: Joi.string().max(1000).optional(),
-          type: Joi.string().max(100).required(),
-          price: Joi.object({
-            amount: Joi.number().min(0).required(),
-            currency: Joi.string()
-              .valid("ILS", "USD", "EUR")
-              .default("ILS")
-              .optional(),
-            originalPrice: Joi.number().min(0).optional().allow(null),
-            discount: Joi.number().min(0).max(100).optional().allow(null),
-          }).required(),
-          quantity: Joi.alternatives()
-            .try(
-              Joi.number().min(1).required(),
-              Joi.object({
-                total: Joi.number().min(1).required(),
-                available: Joi.number().min(1).required(),
-                sold: Joi.number().optional(),
-                reserved: Joi.number().optional(),
-              }).required()
-            )
-            .required(),
-          restrictions: Joi.object({
-            ageLimit: Joi.object({
-              min: Joi.number().min(0).optional(),
-              max: Joi.number().min(0).optional(),
-            }).optional(),
-            maxPerPerson: Joi.number().min(1).optional(),
-            requiresId: Joi.boolean().optional(),
-            specialRequirements: Joi.string().optional(),
-          }).optional(),
-        })
-      )
-    )
-    .optional(),
-  tags: Joi.array().items(Joi.string()).optional(),
-  featured: Joi.boolean().default(false).optional(),
-  status: Joi.string()
-    .valid("draft", "approved", "rejected", "completed")
-    .optional(),
-  budget: Joi.object({
-    total: Joi.number().min(0).optional(),
-    allocated: Joi.object()
-      .pattern(Joi.string(), Joi.number().min(0))
-      .optional(),
+    allocated: Joi.object().pattern(Joi.string(), Joi.number().min(0)).optional(),
     spent: Joi.number().min(0).optional(),
   }).optional(),
 });
+
 
 const updateEventSchema = Joi.object({
   name: Joi.string().min(2).max(200).optional(),
@@ -776,285 +398,185 @@ const verifyPasswordSchema = Joi.object({
 // @desc    Create new event with multiple suppliers and services
 // @route   POST /api/events
 // @access  Private (Producers only)
-router.post("/", protect, authorize("producer"), async (req, res) => {
-  try {
-    // Validate input
-    console.log("req.body----?", req.body);
-    const { error, value } = createEventSchema.validate(req.body);
+router.post(
+  "/",
+  protect,
+  authorize("producer"),
+  upload.single("image"),
+  async (req, res) => {
+    try {
+      // Parse event data from FormData
+      const eventData = req.body.data ? JSON.parse(req.body.data) : req.body;
 
-    console.log("error : ", error);
-    if (error) {
-      return res.status(400).json({
-        success: false,
-        message: error.message,
-        errors: error.details.map((detail) => detail.message),
-      });
-    }
-
-    // Validate suppliers and services exist
-    if (value.suppliers && value.suppliers.length > 0) {
-      const supplierIds = value.suppliers.map((s) => s.supplierId);
-      const serviceIds = value.suppliers.flatMap((s) =>
-        s.services.map((srv) => srv.serviceId)
-      );
-
-      // Check if all suppliers exist and are verified
-      const suppliers = await User.find({
-        _id: { $in: supplierIds },
-        role: "supplier",
-        isVerified: true,
-        isActive: true,
-      });
-
-      if (suppliers.length !== supplierIds.length) {
+      // Validate input
+      const { error, value } = createEventSchema.validate(eventData);
+      if (error) {
         return res.status(400).json({
           success: false,
-          message: "One or more suppliers not found or not verified",
+          message: error.message,
+          errors: error.details.map((d) => d.message),
         });
       }
 
-      // Check if all services exist and belong to the respective suppliers
-      const services = await Service.find({ _id: { $in: serviceIds } });
-      if (services.length !== serviceIds.length) {
-        return res.status(400).json({
-          success: false,
-          message: "One or more services not found",
+      // Suppliers & Services validation (same as before)
+      if (value.suppliers && value.suppliers.length > 0) {
+        const supplierIds = value.suppliers.map((s) => s.supplierId);
+        const serviceIds = value.suppliers.flatMap((s) =>
+          s.services.map((srv) => srv.serviceId)
+        );
+
+        const suppliers = await User.find({
+          _id: { $in: supplierIds },
+          role: "supplier",
+          isVerified: true,
+          isActive: true,
         });
-      }
 
-      // Validate that each service belongs to the correct supplier
-      for (const supplierData of value.suppliers) {
-        const supplierServices = services.filter(
-          (s) => s.supplierId.toString() === supplierData.supplierId
-        );
-
-        const requestedServiceIds = supplierData.services.map(
-          (s) => s.serviceId
-        );
-        const availableServiceIds = supplierServices.map((s) =>
-          s._id.toString()
-        );
-
-        const invalidServices = requestedServiceIds.filter(
-          (id) => !availableServiceIds.includes(id)
-        );
-
-        if (invalidServices.length > 0) {
+        if (suppliers.length !== supplierIds.length) {
           return res.status(400).json({
             success: false,
-            message: `Services ${invalidServices.join(
-              ", "
-            )} do not belong to supplier ${supplierData.supplierId}`,
+            message: "One or more suppliers not found or not verified",
           });
         }
+
+        const services = await Service.find({ _id: { $in: serviceIds } });
+        if (services.length !== serviceIds.length) {
+          return res.status(400).json({
+            success: false,
+            message: "One or more services not found",
+          });
+        }
+
+        for (const supplierData of value.suppliers) {
+          const supplierServices = services.filter(
+            (s) => s.supplierId.toString() === supplierData.supplierId
+          );
+          const invalidServices = supplierData.services
+            .map((s) => s.serviceId)
+            .filter((id) => !supplierServices.map((s) => s._id.toString()).includes(id));
+          if (invalidServices.length > 0) {
+            return res.status(400).json({
+              success: false,
+              message: `Services ${invalidServices.join(
+                ", "
+              )} do not belong to supplier ${supplierData.supplierId}`,
+            });
+          }
+        }
       }
-    }
 
-    // Transform suppliers data for the schema with package information
-    const transformedSuppliers = value.suppliers
-      ? value.suppliers.flatMap((supplier) =>
-          supplier.services.map((service) => {
-            const supplierData = {
-              supplierId: supplier.supplierId,
-              serviceId: service.serviceId,
-              requestedPrice: service.requestedPrice,
-              notes: service.notes,
-              priority: service.priority,
-              status: "pending",
-            };
+      // Transform suppliers for DB
+      const transformedSuppliers = value.suppliers
+        ? value.suppliers.flatMap((supplier) =>
+            supplier.services.map((service) => {
+              const s = {
+                supplierId: supplier.supplierId,
+                serviceId: service.serviceId,
+                requestedPrice: service.requestedPrice,
+                notes: service.notes,
+                priority: service.priority,
+                status: "pending",
+              };
+              if (service.selectedPackageId) s.selectedPackageId = service.selectedPackageId;
+              if (service.packageDetails && Object.keys(service.packageDetails).length > 0)
+                s.packageDetails = service.packageDetails;
+              return s;
+            })
+          )
+        : [];
 
-            // Only add package info if it's actually provided
-            if (service.selectedPackageId) {
-              supplierData.selectedPackageId = service.selectedPackageId;
-            }
+      // Prepare event object
+      const eventToCreate= {
+        ...value,
+        suppliers: transformedSuppliers,
+        producerId: req.user._id,
+      };
 
-            if (
-              service.packageDetails &&
-              Object.keys(service.packageDetails).length > 0
-            ) {
-              supplierData.packageDetails = service.packageDetails;
-            }
+      // Handle uploaded image path
+      if (req.file) {
+        eventToCreate.image = `/uploads/events/${req.file.filename}`; // Save relative path in DB
+      }
 
-            return supplierData;
-          })
+      // Default ticketInfo
+      if (!eventToCreate.ticketInfo) {
+        eventToCreate.ticketInfo = {
+          availableTickets: 0,
+          soldTickets: 0,
+          reservedTickets: 0,
+          priceRange: { min: 0, max: 0 },
+          isFree: true,
+        };
+      }
+
+      // Extract tickets
+      const ticketsToCreate = eventToCreate.tickets || [];
+      delete eventToCreate.tickets;
+      delete eventToCreate.suppliers;
+
+      // Create event
+      const event = await Event.create(eventToCreate);
+
+      // Create tickets
+      if (ticketsToCreate.length > 0) {
+        const ticketDocs = ticketsToCreate.map((ticket) => {
+          const priceAmount =
+            typeof ticket.price === "number" ? ticket.price : ticket.price.amount;
+          const currency =
+            ticket.currency ||
+            (typeof ticket.price === "object" ? ticket.price.currency : "ILS");
+          const quantity =
+            typeof ticket.quantity === "number" ? ticket.quantity : ticket.quantity.total;
+
+          return {
+            eventId: event._id,
+            eventName: event.name,
+            title: ticket.title,
+            description: ticket.description || "",
+            type: ticket.type,
+            price: { amount: priceAmount, currency },
+            quantity: { total: quantity, available: quantity, sold: 0, reserved: 0 },
+            status: "active",
+            validity: { startDate: event.startDate, endDate: event.endDate, isActive: true },
+            sales: { startDate: event.startDate, endDate: event.endDate },
+            restrictions: { maxPerPerson: 10 },
+            refundPolicy: { allowed: true, deadline: 7, fee: 0 },
+          };
+        });
+        await Ticket.insertMany(ticketDocs);
+      }
+
+      // Add suppliers
+      for (const supplier of transformedSuppliers) {
+        const details = {
+          requestedPrice: supplier.requestedPrice,
+          notes: supplier.notes,
+          priority: supplier.priority,
+        };
+        if (supplier.selectedPackageId) details.selectedPackageId = supplier.selectedPackageId;
+        if (supplier.packageDetails) details.packageDetails = supplier.packageDetails;
+        await event.addSupplierWithDetails(supplier.supplierId, supplier.serviceId, details);
+      }
+
+      // Populate event
+      const populatedEvent = await Event.findById(event._id)
+        .populate("producerId", "name companyName profileImage email phone")
+        .populate(
+          "suppliers.supplierId",
+          "name companyName profileImage email phone supplierDetails"
         )
-      : [];
+        .populate(
+          "suppliers.serviceId",
+          "title description price category subcategories tags availability location experience rating portfolio packages featured"
+        )
+        .populate("tickets");
 
-    // Create event
-    const eventData = {
-      ...value,
-      suppliers: transformedSuppliers,
-      producerId: req.user._id,
-    };
-
-    // If ticketInfo is not provided, set default values to satisfy model requirements
-    if (!eventData.ticketInfo) {
-      eventData.ticketInfo = {
-        availableTickets: 0,
-        soldTickets: 0,
-        reservedTickets: 0,
-        priceRange: {
-          min: 0,
-          max: 0,
-        },
-        isFree: true,
-      };
-    } else {
-      // Ensure isFree is set if not provided
-      if (eventData.ticketInfo.isFree === undefined) {
-        eventData.ticketInfo.isFree = true;
-      }
-      // Ensure priceRange exists
-      if (!eventData.ticketInfo.priceRange) {
-        eventData.ticketInfo.priceRange = {
-          min: 0,
-          max: 0,
-        };
-      }
-    }
-
-    // Extract tickets array if provided
-    const ticketsToCreate = eventData.tickets || [];
-    delete eventData.suppliers; // Remove the transformed suppliers temporarily
-    delete eventData.tickets; // Remove tickets array temporarily
-
-    const event = await Event.create(eventData);
-
-    // Create ticket documents if tickets array was provided
-
-    if (ticketsToCreate.length > 0) {
-      const ticketDocuments = ticketsToCreate.map((ticket) => {
-        // Handle both simplified and nested formats
-        const priceAmount =
-          typeof ticket.price === "number" ? ticket.price : ticket.price.amount;
-        const currency =
-          ticket.currency ||
-          (typeof ticket.price === "object" ? ticket.price.currency : null) ||
-          "ILS";
-        const quantity =
-          typeof ticket.quantity === "number"
-            ? ticket.quantity
-            : ticket.quantity.total;
-
-        return {
-          eventId: event._id,
-          eventName: event.name,
-          title: ticket.title,
-          description: ticket.description || "",
-          type: ticket.type,
-          price: {
-            amount: priceAmount,
-            currency: currency,
-          },
-          quantity: {
-            total: quantity,
-            available: quantity,
-            sold: 0,
-            reserved: 0,
-          },
-          status: "active",
-          validity: {
-            startDate: event.startDate,
-            endDate: event.endDate,
-            isActive: true,
-          },
-          sales: {
-            startDate: event.startDate,
-            endDate: event.endDate,
-          },
-          restrictions: {
-            maxPerPerson: 10,
-          },
-          refundPolicy: {
-            allowed: true,
-            deadline: 7,
-            fee: 0,
-          },
-        };
-      });
-
-      const createdTickets = await Ticket.insertMany(ticketDocuments);
-      console.log(
-        `Created ${createdTickets.length} tickets for event ${event._id}`
-      );
-
-      // Update event's ticketInfo based on created tickets
-      const totalTickets = ticketsToCreate.reduce((sum, t) => {
-        const qty =
-          typeof t.quantity === "number" ? t.quantity : t.quantity.total;
-        return sum + qty;
-      }, 0);
-      const prices = ticketsToCreate.map((t) =>
-        typeof t.price === "number" ? t.price : t.price.amount
-      );
-
-      event.ticketInfo = {
-        availableTickets: totalTickets,
-        soldTickets: 0,
-        reservedTickets: 0,
-        priceRange: {
-          min: Math.min(...prices),
-          max: Math.max(...prices),
-        },
-        isFree: Math.min(...prices) === 0,
-      };
-
-      await event.save();
-      console.log(
-        `Updated event ticketInfo: ${totalTickets} total tickets, price range: ${Math.min(
-          ...prices
-        )} - ${Math.max(...prices)}`
-      );
-    }
-
-    // Add suppliers using the model method with package information
-    for (const supplier of transformedSuppliers) {
-      const details = {
-        requestedPrice: supplier.requestedPrice,
-        notes: supplier.notes,
-        priority: supplier.priority,
-      };
-
-      // Only add package info if it exists
-      if (supplier.selectedPackageId) {
-        details.selectedPackageId = supplier.selectedPackageId;
+      // Emails
+      try {
+        await emailService.sendEventCreatedEmail(req.user, populatedEvent);
+      } catch (err) {
+        console.error("Failed to send event created email", err);
       }
 
-      if (supplier.packageDetails) {
-        details.packageDetails = supplier.packageDetails;
-      }
-
-      await event.addSupplierWithDetails(
-        supplier.supplierId,
-        supplier.serviceId,
-        details
-      );
-    }
-
-    // Populate and return the created event with full details
-    const populatedEvent = await Event.findById(event._id)
-      .populate("producerId", "name companyName profileImage email phone")
-      .populate(
-        "suppliers.supplierId",
-        "name companyName profileImage email phone supplierDetails"
-      )
-      .populate(
-        "suppliers.serviceId",
-        "title description price category subcategories tags availability location experience rating portfolio packages featured"
-      )
-      .populate("tickets");
-
-    // Send event created email to producer
-    try {
-      await emailService.sendEventCreatedEmail(req.user, populatedEvent);
-      console.log("✅ Event created email sent to producer");
-    } catch (emailError) {
-      console.error("❌ Failed to send event created email:", emailError);
-      // Don't fail the request if email fails
-    }
-
-    // Send invitation emails to all suppliers
-    if (populatedEvent.suppliers && populatedEvent.suppliers.length > 0) {
       for (const supplierEntry of populatedEvent.suppliers) {
         if (supplierEntry.supplierId && supplierEntry.serviceId) {
           try {
@@ -1064,34 +586,29 @@ router.post("/", protect, authorize("producer"), async (req, res) => {
               req.user,
               supplierEntry.serviceId
             );
-            console.log(
-              `✅ Invitation email sent to supplier ${supplierEntry.supplierId.email}`
-            );
-          } catch (emailError) {
+          } catch (err) {
             console.error(
-              `❌ Failed to send invitation email to supplier ${supplierEntry.supplierId._id}:`,
-              emailError
+              `Failed to send invitation email to supplier ${supplierEntry.supplierId._id}:`,
+              err
             );
-            // Continue with other suppliers even if one fails
           }
         }
       }
-    }
 
-    res.status(201).json({
-      success: true,
-      data: populatedEvent,
-      message: "Event created successfully with suppliers and services",
-    });
-  } catch (error) {
-    console.error("Create event error:", error);
-    res.status(500).json({
-      success: false,
-      message: "Error creating event",
-      error: error.message,
-    });
+      res.status(201).json({
+        success: true,
+        data: populatedEvent,
+        message: "Event created successfully with suppliers and services",
+      });
+    } catch (err) {
+      console.error("Create event error:", err);
+      res
+        .status(500)
+        .json({ success: false, message: "Error creating event", error: err.message });
+    }
   }
-});
+);
+
 
 // @desc    Add multiple suppliers with multiple services to existing event
 // @route   POST /api/events/:id/suppliers

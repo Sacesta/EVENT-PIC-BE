@@ -565,9 +565,9 @@ router.get('/:chatId/messages', protect, async (req, res) => {
     }
 
     const isParticipant = chat.participants.some(p => p.user._id.toString() === userId.toString());
-    // const isAdmin = req.user.role === 'admin'; && !isAdmin
+    const isAdmin = req.user.role === 'admin' ;
     
-    if (!isParticipant ) {
+    if (!isParticipant && !isAdmin) {
       return res.status(403).json({
         success: false,
         message: 'Not authorized to access this chat'
@@ -977,7 +977,7 @@ router.get('/admin/all', protect, async (req, res) => {
     const { limit = 100, page = 1 } = req.query;
     const skip = (parseInt(page) - 1) * parseInt(limit);
 
-    const chats = await Chat.find({ status: 'active' })
+    const chats = await Chat.find({ })
       .populate('participants.user', 'name email role profileImage')
       .populate('event', 'name date location')
       .populate('lastMessage.sender', 'name role profileImage')
@@ -985,7 +985,9 @@ router.get('/admin/all', protect, async (req, res) => {
       .limit(parseInt(limit))
       .skip(skip);
 
-    const totalChats = await Chat.countDocuments({ status: 'active' });
+      console.log("All chats for admin view ---->",chats);
+
+    const totalChats = await Chat.countDocuments({ });
 
     res.status(200).json({
       success: true,

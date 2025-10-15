@@ -1,6 +1,7 @@
 const express = require('express');
 const Joi = require('joi');
 const User = require('../models/User');
+const Event = require('../models/Event');
 const { protect, authorize } = require('../middleware/auth');
 
 const router = express.Router();
@@ -137,8 +138,8 @@ router.put('/me/password', protect, async (req, res) => {
 
 // @desc    Search users
 // @route   GET /api/users/search
-// @access  Public
-router.get('/search', async (req, res) => {
+// @access  Private
+router.get('/search', protect, async (req, res) => {
   try {
     const {
       page = 1,
@@ -151,12 +152,114 @@ router.get('/search', async (req, res) => {
       rating
     } = req.query;
 
+    console.log("Current user : ",req.user._id);
+
     // Build filter object
     const filter = { isActive: true };
     
-    if (role) filter.role = role;
+    // Determine target role based on current user's role
+    let targetRole = role;
+    
+    if (req.user.role === 'supplier') {
+      // Suppliers search for producers who have added them to events
+      targetRole = 'producer';
+      
+      // Get all events where this supplier has been added
+      const supplierEvents = await Event.find({ 
+        'suppliers.supplierId': req.user._id 
+      })
+        .select('producerId')
+        .lean();
+
+      
+      // Extract unique producer IDs from all events
+      const producerIds = new Set();
+      supplierEvents.forEach(event => {
+        if (event.producerId) {
+          producerIds.add(event.producerId.toString());
+        }
+      });
+      
+      // Convert Set to Array
+      const producerIdsArray = Array.from(producerIds);
+      
+      // If no producers found in events, return empty results
+      if (producerIdsArray.length === 0) {
+        return res.json({
+          success: true,
+          data: [],
+          pagination: {
+            currentPage: parseInt(page),
+            totalPages: 0,
+            totalUsers: 0,
+            hasNextPage: false,
+            hasPrevPage: false
+          },
+          message: 'No producers have added you to their events yet'
+        });
+      }
+      
+      // Add producer IDs filter to only show producers who have added this supplier
+      filter._id = { $in: producerIdsArray };
+      
+    } else if (req.user.role === 'producer') {
+      // Producers search for suppliers they have worked with
+      targetRole = 'supplier';
+      
+      // Get all events created by this producer
+      const producerEvents = await Event.find({ producerId: req.user._id })
+        .select('suppliers')
+        .lean();
+
+
+      // Extract unique supplier IDs from all events
+      const supplierIds = new Set();
+      producerEvents.forEach(event => {
+        if (event.suppliers && event.suppliers.length > 0) {
+          event.suppliers.forEach(supplier => {
+            if (supplier.supplierId) {
+              supplierIds.add(supplier.supplierId.toString());
+            }
+          });
+        }
+      });
+      
+      // Convert Set to Array
+      const supplierIdsArray = Array.from(supplierIds);
+      
+      // If no suppliers found in events, return empty results
+      if (supplierIdsArray.length === 0) {
+        return res.json({
+          success: true,
+          data: [],
+          pagination: {
+            currentPage: parseInt(page),
+            totalPages: 0,
+            totalUsers: 0,
+            hasNextPage: false,
+            hasPrevPage: false
+          },
+          message: 'No suppliers found in your events'
+        });
+      }
+      
+      // Add supplier IDs filter to only show suppliers from producer's events
+      filter._id = { $in: supplierIdsArray };
+      
+    } else if (req.user.role === 'admin') {
+      // Admins can search any role (use query param or no filter)
+      targetRole = role;
+    }
+    
+    // Apply role filter if targetRole is determined
+    if (targetRole) {
+      filter.role = targetRole;
+    }
+    
     if (city) filter['location.city'] = new RegExp(city, 'i');
-    if (experience) filter[`${role}Details.experience`] = experience;
+    if (experience && targetRole) {
+      filter[`${targetRole}Details.experience`] = experience;
+    }
     if (rating) filter.rating = { $gte: parseFloat(rating) };
 
     if (search) {
@@ -166,7 +269,7 @@ router.get('/search', async (req, res) => {
       ];
     }
 
-    if (category && role === 'supplier') {
+    if (category && targetRole === 'supplier') {
       filter['supplierDetails.categories'] = category;
     }
 

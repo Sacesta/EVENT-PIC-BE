@@ -1,11 +1,32 @@
 const express = require("express");
 const Joi = require("joi");
 const Service = require("../models/Service");
+const multer = require('multer');
+const path = require('path');
+const fs = require('fs');
 const {
   protect,
   authorize,
   requireApprovedSupplier,
 } = require("../middleware/auth");
+
+// Create uploads folder if it doesn't exist
+const uploadPath = path.join(__dirname, '../uploads/supplier/packages');
+if (!fs.existsSync(uploadPath)) {
+  fs.mkdirSync(uploadPath, { recursive: true });
+}
+
+// Multer storage configuration
+const storage = multer.diskStorage({
+  destination: (req, file, cb) => {
+    cb(null, uploadPath);
+  },
+  filename: (req, file, cb) => {
+    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1e9);
+    cb(null, uniqueSuffix + path.extname(file.originalname));
+  },
+});
+const upload = multer({ storage });
 
 const router = express.Router();
 
@@ -50,7 +71,7 @@ const createServiceSchema = Joi.object({
     .items(
       Joi.object({
         name: Joi.string().required(),
-        description: Joi.string().optional(),
+        description: Joi.string().allow('').optional(),
         price: Joi.number().min(0).required(),
         features: Joi.array().items(Joi.string()).optional(),
         duration: Joi.number().min(0).optional(),
@@ -168,7 +189,7 @@ const updateServiceSchema = Joi.object({
     .items(
       Joi.object({
         name: Joi.string().optional(),
-        description: Joi.string().optional(),
+        description: Joi.string().allow('').optional(),
         price: Joi.number().min(0).optional(),
         features: Joi.array().items(Joi.string()).optional(),
         duration: Joi.number().min(0).optional(),
@@ -250,7 +271,7 @@ const updateServiceSchema = Joi.object({
 const packageSchema = Joi.object({
   _id: Joi.any().strip(), // Strip _id field from validation to allow frontend to send complete package object
   name: Joi.string().required(),
-  description: Joi.string().optional(),
+  description: Joi.string().allow('').optional(),
   price: Joi.number().min(0).required(),
   features: Joi.array().items(Joi.string()).optional(),
   duration: Joi.number().min(0).optional(),
@@ -1184,10 +1205,11 @@ router.post(
   "/:id/packages",
   protect,
   requireApprovedSupplier,
+  upload.single('image'),
   async (req, res) => {
     try {
       // Validate package input
-      console.log("body------>", req.body);
+      console.log("body check------>", req.body);
       const { error, value } = packageSchema.validate(req.body);
       if (error) {
         return res.status(400).json({
@@ -1211,6 +1233,11 @@ router.post(
           success: false,
           message: "Not authorized to modify this service",
         });
+      }
+
+        // Save image path if uploaded
+      if (req.file) {
+        value.imageUrl = `/uploads/supplier/packages/${req.file.filename}`;
       }
 
       // Add package to service
@@ -1243,6 +1270,7 @@ router.put(
   "/:id/packages/:packageId",
   protect,
   requireApprovedSupplier,
+   upload.single('image'),
   async (req, res) => {
     try {
       // Validate package input
@@ -1284,10 +1312,19 @@ router.put(
         });
       }
 
-      service.packages[packageIndex] = {
+      // Update package
+      const updatedPackage = {
         ...service.packages[packageIndex].toObject(),
         ...value,
       };
+
+      // Save new image if uploaded
+      if (req.file) {
+        updatedPackage.imageUrl = `/uploads/packages/${req.file.filename}`;
+      }
+
+      service.packages[packageIndex] = updatedPackage;
+
       await service.save();
 
       res.json({
@@ -1295,7 +1332,7 @@ router.put(
         message: "Package updated successfully",
         data: {
           serviceId: service._id,
-          package: service.packages[packageIndex],
+          package:updatedPackage,
         },
       });
     } catch (error) {

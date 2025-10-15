@@ -7,6 +7,10 @@ const morgan = require('morgan');
 const rateLimit = require('express-rate-limit');
 const http = require('http');
 require('dotenv').config();
+const path = require('path');
+// require("../services/eventNotificationCron");
+
+
 
 const config = require('../config/environment');
 const authRoutes = require('../routes/auth');
@@ -29,6 +33,9 @@ const socketService = require('../services/socketService');
 const app = express();
 const server = http.createServer(app);
 const PORT = config.PORT;
+
+app.use('/uploads/events', express.static(path.join(__dirname, 'uploads/events')));
+app.use('/uploads/supplier/packages', express.static(path.join(__dirname, 'uploads/supplier/packages')));
 
 // Trust Vercel's proxy for rate limiting
 app.set('trust proxy', 1);
@@ -58,9 +65,25 @@ const limiter = rateLimit({
 });
 app.use('/api/', limiter);
 
-// CORS configuration - explicit for Vercel
-app.use(cors());
+// CORS configuration
+const allowedOrigins = [
+  'https://pic-fe.vercel.app',
+  'https://pic-events.co.il',
+  'https://www.pic-events.co.il',
+  'https://api.pic-events.co.il',
+  'http://localhost:3000',
+  'http://localhost:5173',
+  'http://localhost:8081',
+  'http://localhost:8080'
+];
 
+app.use(cors({
+  origin: allowedOrigins,
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],
+  optionsSuccessStatus: 200
+}));
 
 // Body parsing middleware
 app.use(express.json({ limit: '10mb' }));
