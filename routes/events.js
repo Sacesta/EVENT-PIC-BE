@@ -90,6 +90,32 @@ const createEventSchema = Joi.object({
       "other"
     )
     .required(),
+     requiredServices: Joi.array()
+    .items(
+      Joi.string().valid(
+        "photography",
+        "videography",
+        "catering",
+        "bar",
+        "music",
+        "musicians",
+        "decoration",
+        "scenery",
+        "lighting",
+        "sound",
+        "sounds_lights",
+        "transportation",
+        "security",
+        "first_aid",
+        "insurance",
+        "furniture",
+        "tents",
+        "location",
+        "dj",
+        "other"
+      )
+    )
+    .optional(),
 
   // UPDATED: Simplified suppliers schema to match your actual data structure
   suppliers: Joi.array().items(
