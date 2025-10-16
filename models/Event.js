@@ -10,7 +10,7 @@ const eventSchema = new mongoose.Schema({
   },
   password: {
     type: String,
-    select: false, // Don't return password in queries by default
+    select: false,
     minlength: [6, 'Password must be at least 6 characters']
   },
   description: {
@@ -26,9 +26,13 @@ const eventSchema = new mongoose.Schema({
     required: [true, 'Start date is required'],
     validate: {
       validator: function(value) {
-        return value > new Date();
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+        const startDate = new Date(value);
+        startDate.setHours(0, 0, 0, 0);
+        return startDate >= today;
       },
-      message: 'Start date must be in the future'
+      message: 'Start date must be today or in the future'
     }
   },
   endDate: {
@@ -40,7 +44,6 @@ const eventSchema = new mongoose.Schema({
     required: [true, 'Start time is required'],
     validate: {
       validator: function(value) {
-        // Validate time format: HH:MM (24-hour) or HH:MM AM/PM (12-hour)
         const time24Regex = /^([0-1]?[0-9]|2[0-3]):[0-5][0-9]$/;
         const time12Regex = /^(0?[1-9]|1[0-2]):[0-5][0-9]\s?(AM|PM|am|pm)$/;
         return time24Regex.test(value) || time12Regex.test(value);
@@ -53,7 +56,6 @@ const eventSchema = new mongoose.Schema({
     required: [true, 'End time is required'],
     validate: {
       validator: function(value) {
-        // Validate time format: HH:MM (24-hour) or HH:MM AM/PM (12-hour)
         const time24Regex = /^([0-1]?[0-9]|2[0-3]):[0-5][0-9]$/;
         const time12Regex = /^(0?[1-9]|1[0-2]):[0-5][0-9]\s?(AM|PM|am|pm)$/;
         return time24Regex.test(value) || time12Regex.test(value);
@@ -93,39 +95,21 @@ const eventSchema = new mongoose.Schema({
     type: String,
     required: [true, 'Event category is required'],
     enum: [
-       'birthday',
-  'wedding',
-  'corporate',
-  'conference',
-  'workshop',
-  'concert',
-  'festival',
-  'graduation',
-  'anniversary',
-  'baby-shower',
-  'networking',
-  'charity',
-  'other'
+      'birthday', 'wedding', 'corporate', 'conference', 'workshop',
+      'concert', 'festival', 'graduation', 'anniversary', 'baby-shower',
+      'networking', 'charity', 'other'
     ]
   },
   requiredServices: [{
     type: String,
     enum: [
-      'photography',          // צלמים
-      'catering',             // קייטרינג
-      'bar',                  // בר
-      'musicians',            // אומנים
-      'scenery',              // scenery / תפאורה
-      'sounds_lights',        // הגברה ותאורה
-      'transportation',       // שירותי הסעות
-      'security',             // אבטחה
-      'first_aid',            // עזרה ראשונה
-      'insurance',            // ביטוח
-      'location',             // מקומות להשכרה
-      'dj'                    // DJ
+      'photography', 'catering', 'bar', 'musicians', 'scenery',
+      'sounds_lights', 'transportation', 'security', 'first_aid',
+      'insurance', 'location', 'dj'
     ]
   }],
-  // Enhanced suppliers structure to support multiple services per supplier
+
+  // ✅ Enhanced suppliers structure
   suppliers: [{
     supplierId: {
       type: mongoose.Schema.Types.ObjectId,
@@ -137,12 +121,10 @@ const eventSchema = new mongoose.Schema({
       ref: 'Service',
       required: true
     },
-    // Selected package ID from the service's packages array
     selectedPackageId: {
       type: mongoose.Schema.Types.ObjectId,
       required: false
     },
-    // Store package details snapshot at time of selection
     packageDetails: {
       name: String,
       description: String,
@@ -178,7 +160,6 @@ const eventSchema = new mongoose.Schema({
     },
     confirmedAt: Date,
     completedAt: Date,
-    // Communication thread
     messages: [{
       from: {
         type: String,
@@ -199,7 +180,6 @@ const eventSchema = new mongoose.Schema({
         default: false
       }
     }],
-    // Contract/Agreement details
     contract: {
       terms: String,
       deliverables: [String],
@@ -213,25 +193,29 @@ const eventSchema = new mongoose.Schema({
       }],
       paymentTerms: {
         amount: Number,
-        schedule: String, // 'upfront', '50-50', 'on-completion'
+        schedule: String,
         dueDate: Date
       }
     }
   }],
+
   producerId: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'User',
     required: [true, 'Producer ID is required']
   },
+
   status: {
     type: String,
     enum: ['draft', 'approved', 'rejected', 'completed'],
     default: 'draft'
   },
+
   isPublic: {
     type: Boolean,
     default: false
   },
+
   ticketInfo: {
     availableTickets: {
       type: Number,
@@ -263,7 +247,28 @@ const eventSchema = new mongoose.Schema({
       default: true
     }
   },
-  // Budget management
+
+  // ✅ NEW: Bank Details Section
+  bankDetails: {
+    bankName: {
+      type: String,
+      maxlength: [100, 'Bank name cannot exceed 100 characters']
+    },
+    branch: {
+      type: String,
+      maxlength: [100, 'Branch name cannot exceed 100 characters']
+    },
+    accountNumber: {
+      type: String,
+      maxlength: [50, 'Account number cannot exceed 50 characters']
+    },
+    accountHolderName: {
+      type: String,
+      maxlength: [100, 'Account holder name cannot exceed 100 characters']
+    }
+  },
+
+  // Budget Management
   budget: {
     total: {
       type: Number,
@@ -271,7 +276,7 @@ const eventSchema = new mongoose.Schema({
     },
     allocated: {
       type: Map,
-      of: Number, // Service category -> allocated amount
+      of: Number,
       default: {}
     },
     spent: {
@@ -280,20 +285,24 @@ const eventSchema = new mongoose.Schema({
       min: 0
     }
   },
+
   tags: [String],
+
   featured: {
     type: Boolean,
     default: false
   },
+
   views: {
     type: Number,
     default: 0
   },
+
   likes: [{
     type: mongoose.Schema.Types.ObjectId,
     ref: 'User'
   }],
-  // Analytics and insights
+
   analytics: {
     supplierRequests: {
       type: Number,
@@ -304,7 +313,7 @@ const eventSchema = new mongoose.Schema({
       default: 0
     },
     averageResponseTime: {
-      type: Number, // in hours
+      type: Number,
       default: 0
     },
     totalServicesCost: {
@@ -312,6 +321,7 @@ const eventSchema = new mongoose.Schema({
       default: 0
     }
   },
+
   metadata: {
     createdAt: {
       type: Date,
@@ -329,6 +339,7 @@ const eventSchema = new mongoose.Schema({
   toJSON: { virtuals: true },
   toObject: { virtuals: true }
 });
+
 
 // Indexes for better performance
 eventSchema.index({ producerId: 1 });
@@ -493,13 +504,22 @@ eventSchema.methods.addSupplierWithDetails = function(supplierId, serviceId, det
   if (existingSupplierIndex !== -1) {
     const existingSupplier = this.suppliers[existingSupplierIndex];
     
-    // If trying to add the same package, throw error
+    // If trying to add the same package, just update other details without throwing error
     if (details.selectedPackageId && existingSupplier.selectedPackageId) {
       if (existingSupplier.selectedPackageId.toString() === details.selectedPackageId.toString()) {
-        const packageName = details.packageDetails?.name || existingSupplier.packageDetails?.name || 'Unknown Package';
-        throw new Error(`Package "${packageName}" is already selected for this supplier and service combination`);
+        console.log(`Same package already selected for supplier ${supplierId} and service ${serviceId}, updating other details`);
+        // Update other details but keep the same package
+        this.suppliers[existingSupplierIndex].requestedPrice = details.requestedPrice;
+        this.suppliers[existingSupplierIndex].notes = details.notes;
+        this.suppliers[existingSupplierIndex].priority = details.priority || 'medium';
+        this.suppliers[existingSupplierIndex].requestedAt = new Date();
+        // Don't change status if it's already approved or confirmed
+        if (existingSupplier.status === 'pending') {
+          this.suppliers[existingSupplierIndex].status = 'pending';
+        }
+        return this.save();
       }
-      
+
       // Different package - REPLACE the old one
       console.log(`Replacing package for supplier ${supplierId} and service ${serviceId}`);
       this.suppliers[existingSupplierIndex].selectedPackageId = details.selectedPackageId;
@@ -509,7 +529,7 @@ eventSchema.methods.addSupplierWithDetails = function(supplierId, serviceId, det
       this.suppliers[existingSupplierIndex].priority = details.priority || 'medium';
       this.suppliers[existingSupplierIndex].requestedAt = new Date();
       this.suppliers[existingSupplierIndex].status = 'pending';
-      
+
       return this.save();
     }
     

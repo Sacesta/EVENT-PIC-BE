@@ -6,7 +6,7 @@ const User = require("../models/User");
 const Service = require("../models/Service");
 const Order = require("../models/Order");
 const path = require("path");
-const fs = require("fs"); 
+const fs = require("fs");
 const {
   protect,
   authorize,
@@ -73,58 +73,45 @@ const createEventSchema = Joi.object({
   }).required(),
 
   language: Joi.string().valid("he", "en", "ar").default("he"),
-  category: Joi.string().valid(
-    "birthday", "wedding", "corporate", "conference", "workshop",
-    "concert", "festival", "graduation", "anniversary", "baby-shower",
-    "networking", "charity", "other"
-  ).required(),
-
-  requiredServices: Joi.array().items(
-    Joi.string().valid(
-      "photography", "videography", "catering", "bar", "music", "musicians",
-      "decoration", "scenery", "lighting", "sound", "sounds_lights",
-      "transportation", "security", "first_aid", "insurance",
-      "furniture", "tents", "location", "dj", "other"
+  category: Joi.string()
+    .valid(
+      "birthday",
+      "wedding",
+      "corporate",
+      "conference",
+      "workshop",
+      "concert",
+      "festival",
+      "graduation",
+      "anniversary",
+      "baby-shower",
+      "networking",
+      "charity",
+      "other"
     )
-  ).optional(),
+    .required(),
 
+  // UPDATED: Simplified suppliers schema to match your actual data structure
   suppliers: Joi.array().items(
-    Joi.alternatives().try(
-      Joi.object({
-        supplierId: Joi.string().required(),
-        services: Joi.array().items(
-          Joi.object({
-            serviceId: Joi.string().required(),
-            selectedPackageId: Joi.string().optional(),
-            packageDetails: Joi.object({
-              name: Joi.string(),
-              description: Joi.string(),
-              price: Joi.number().min(0),
-              features: Joi.array().items(Joi.string()),
-              duration: Joi.number(),
-            }).optional(),
-            requestedPrice: Joi.number().min(0).optional(),
-            notes: Joi.string().max(500).optional(),
-            priority: Joi.string().valid("low", "medium", "high").default("medium"),
-          })
-        ).min(1).required(),
-      }),
-      Joi.object({
-        supplierId: Joi.string().required(),
-        serviceId: Joi.string().required(),
-        selectedPackageId: Joi.string().optional(),
-        packageDetails: Joi.object({
-          name: Joi.string(),
-          description: Joi.string(),
-          price: Joi.number().min(0),
-          features: Joi.array().items(Joi.string()),
-          duration: Joi.number(),
-        }).optional(),
-        requestedPrice: Joi.number().min(0).optional(),
-        notes: Joi.string().max(500).optional(),
-        priority: Joi.string().valid("low", "medium", "high").default("medium"),
-      })
-    )
+    Joi.object({
+      supplierId: Joi.string().required(),
+      services: Joi.array().items(
+        Joi.object({
+          serviceId: Joi.string().required(),
+          selectedPackageId: Joi.string().optional(),
+          packageDetails: Joi.object({
+            name: Joi.string(),
+            description: Joi.string().allow('').optional(),
+            price: Joi.number().min(0),
+            features: Joi.array().items(Joi.string()),
+            duration: Joi.number(),
+          }).optional(),
+          requestedPrice: Joi.number().min(0).optional(),
+          notes: Joi.string().max(500).optional(),
+          priority: Joi.string().valid("low", "medium", "high").default("medium"),
+        })
+      ).min(1).required(),
+    })
   ).optional(),
 
   isPublic: Joi.boolean().default(false),
@@ -140,58 +127,73 @@ const createEventSchema = Joi.object({
     isFree: Joi.boolean().optional(),
   }).optional(),
 
-  tickets: Joi.array().items(
-    Joi.alternatives().try(
-      Joi.object({
-        title: Joi.string().max(200).required(),
-        description: Joi.string().max(1000).optional(),
-        type: Joi.string().max(100).required(),
-        price: Joi.number().min(0).required(),
-        currency: Joi.string().valid("ILS", "USD", "EUR").default("ILS"),
-        quantity: Joi.number().min(1).required(),
-      }),
-      Joi.object({
-        title: Joi.string().max(200).required(),
-        description: Joi.string().max(1000).optional(),
-        type: Joi.string().max(100).required(),
-        price: Joi.object({
-          amount: Joi.number().min(0).required(),
+  tickets: Joi.array()
+    .items(
+      Joi.alternatives().try(
+        Joi.object({
+          title: Joi.string().max(200).required(),
+          description: Joi.string().max(1000).optional(),
+          type: Joi.string().max(100).required(),
+          price: Joi.number().min(0).required(),
           currency: Joi.string().valid("ILS", "USD", "EUR").default("ILS"),
-          originalPrice: Joi.number().min(0).optional().allow(null),
-          discount: Joi.number().min(0).max(100).optional().allow(null),
-        }).required(),
-        quantity: Joi.alternatives().try(
-          Joi.number().min(1).required(),
-          Joi.object({
-            total: Joi.number().min(1).required(),
-            available: Joi.number().min(1).required(),
-            sold: Joi.number().optional(),
-            reserved: Joi.number().optional(),
-          }).required()
-        ).required(),
-        restrictions: Joi.object({
-          ageLimit: Joi.object({
-            min: Joi.number().min(0),
-            max: Joi.number().min(0),
+          quantity: Joi.number().min(1).required(),
+        }),
+        Joi.object({
+          title: Joi.string().max(200).required(),
+          description: Joi.string().max(1000).optional(),
+          type: Joi.string().max(100).required(),
+          price: Joi.object({
+            amount: Joi.number().min(0).required(),
+            currency: Joi.string().valid("ILS", "USD", "EUR").default("ILS"),
+            originalPrice: Joi.number().min(0).optional().allow(null),
+            discount: Joi.number().min(0).max(100).optional().allow(null),
+          }).required(),
+          quantity: Joi.alternatives()
+            .try(
+              Joi.number().min(0).required(),
+              Joi.object({
+                total: Joi.number().min(0).required(),
+                available: Joi.number().min(0).required(),
+                sold: Joi.number().optional(),
+                reserved: Joi.number().optional(),
+              }).required()
+            )
+            .required(),
+          restrictions: Joi.object({
+            ageLimit: Joi.object({
+              min: Joi.number().min(0),
+              max: Joi.number().min(0),
+            }).optional(),
+            maxPerPerson: Joi.number().min(1).optional(),
+            requiresId: Joi.boolean().optional(),
+            specialRequirements: Joi.string().optional(),
           }).optional(),
-          maxPerPerson: Joi.number().min(1).optional(),
-          requiresId: Joi.boolean().optional(),
-          specialRequirements: Joi.string().optional(),
-        }).optional(),
-      })
+        })
+      )
     )
-  ).optional(),
+    .optional(),
+
+  // NEW: Added bankDetails field
+  bankDetails: Joi.object({
+    bankName: Joi.string().max(100).required(),
+    branch: Joi.string().max(100).required(),
+    accountNumber: Joi.string().max(50).required(),
+    accountHolderName: Joi.string().max(100).required(),
+  }).optional(),
 
   tags: Joi.array().items(Joi.string()).optional(),
   featured: Joi.boolean().default(false),
-  status: Joi.string().valid("draft", "approved", "rejected", "completed").optional(),
+  status: Joi.string()
+    .valid("draft", "approved", "rejected", "completed")
+    .optional(),
   budget: Joi.object({
     total: Joi.number().min(0).optional(),
-    allocated: Joi.object().pattern(Joi.string(), Joi.number().min(0)).optional(),
+    allocated: Joi.object()
+      .pattern(Joi.string(), Joi.number().min(0))
+      .optional(),
     spent: Joi.number().min(0).optional(),
   }).optional(),
 });
-
 
 const updateEventSchema = Joi.object({
   name: Joi.string().min(2).max(200).optional(),
@@ -337,6 +339,16 @@ const updateEventSchema = Joi.object({
     }).optional(),
     isFree: Joi.boolean().optional(),
   }).optional(),
+
+
+    bankDetails: Joi.object({
+    bankName: Joi.string().max(100).required(),
+    branch: Joi.string().max(100).required(),
+    accountNumber: Joi.string().max(50).required(),
+    accountHolderName: Joi.string().max(100).required(),
+  }).optional(),
+
+
   tags: Joi.array().items(Joi.string()).optional(),
   status: Joi.string()
     .valid("draft", "approved", "rejected", "completed")
@@ -405,11 +417,12 @@ router.post(
   upload.single("image"),
   async (req, res) => {
     try {
-      // Parse event data from FormData
+      // Parse form data (handle FormData or JSON)
       const eventData = req.body.data ? JSON.parse(req.body.data) : req.body;
+      console.log("Parsed Event Data:", eventData);
 
-      // Validate input
-      const { error, value } = createEventSchema.validate(eventData);
+      // ✅ Validate request body
+      const { error, value } = createEventSchema.validate(eventData, { abortEarly: false });
       if (error) {
         return res.status(400).json({
           success: false,
@@ -418,13 +431,20 @@ router.post(
         });
       }
 
-      // Suppliers & Services validation (same as before)
+      // ✅ Supplier and Service validation
       if (value.suppliers && value.suppliers.length > 0) {
-        const supplierIds = value.suppliers.map((s) => s.supplierId);
-        const serviceIds = value.suppliers.flatMap((s) =>
+        // Normalize all suppliers into consistent array
+        const normalizedSuppliers = value.suppliers.map((s) => {
+          if (s.services) return s;
+          return { supplierId: s.supplierId, services: [s] };
+        });
+
+        const supplierIds = normalizedSuppliers.map((s) => s.supplierId);
+        const serviceIds = normalizedSuppliers.flatMap((s) =>
           s.services.map((srv) => srv.serviceId)
         );
 
+        // Check suppliers exist & are verified
         const suppliers = await User.find({
           _id: { $in: supplierIds },
           role: "supplier",
@@ -439,6 +459,7 @@ router.post(
           });
         }
 
+        // Check all services exist
         const services = await Service.find({ _id: { $in: serviceIds } });
         if (services.length !== serviceIds.length) {
           return res.status(400).json({
@@ -447,13 +468,17 @@ router.post(
           });
         }
 
-        for (const supplierData of value.suppliers) {
+        // Validate each supplier’s services
+        for (const supplierData of normalizedSuppliers) {
           const supplierServices = services.filter(
             (s) => s.supplierId.toString() === supplierData.supplierId
           );
           const invalidServices = supplierData.services
             .map((s) => s.serviceId)
-            .filter((id) => !supplierServices.map((s) => s._id.toString()).includes(id));
+            .filter(
+              (id) => !supplierServices.map((s) => s._id.toString()).includes(id)
+            );
+
           if (invalidServices.length > 0) {
             return res.status(400).json({
               success: false,
@@ -463,41 +488,44 @@ router.post(
             });
           }
         }
+
+        // ✅ Transform suppliers for DB format
+        value.suppliers = normalizedSuppliers.flatMap((supplier) =>
+          supplier.services.map((service) => {
+            const s = {
+              supplierId: supplier.supplierId,
+              serviceId: service.serviceId,
+              requestedPrice: service.requestedPrice,
+              notes: service.notes,
+              priority: service.priority,
+              status: "pending",
+            };
+            if (service.selectedPackageId)
+              s.selectedPackageId = service.selectedPackageId;
+            if (
+              service.packageDetails &&
+              Object.keys(service.packageDetails).length > 0
+            )
+              s.packageDetails = service.packageDetails;
+            return s;
+          })
+        );
+      } else {
+        value.suppliers = [];
       }
 
-      // Transform suppliers for DB
-      const transformedSuppliers = value.suppliers
-        ? value.suppliers.flatMap((supplier) =>
-            supplier.services.map((service) => {
-              const s = {
-                supplierId: supplier.supplierId,
-                serviceId: service.serviceId,
-                requestedPrice: service.requestedPrice,
-                notes: service.notes,
-                priority: service.priority,
-                status: "pending",
-              };
-              if (service.selectedPackageId) s.selectedPackageId = service.selectedPackageId;
-              if (service.packageDetails && Object.keys(service.packageDetails).length > 0)
-                s.packageDetails = service.packageDetails;
-              return s;
-            })
-          )
-        : [];
-
-      // Prepare event object
-      const eventToCreate= {
+      // ✅ Prepare event object for DB
+      const eventToCreate = {
         ...value,
-        suppliers: transformedSuppliers,
         producerId: req.user._id,
       };
 
-      // Handle uploaded image path
+      // ✅ Handle image
       if (req.file) {
-        eventToCreate.image = `/uploads/events/${req.file.filename}`; // Save relative path in DB
+        eventToCreate.image = `/uploads/events/${req.file.filename}`;
       }
 
-      // Default ticketInfo
+      // ✅ Default ticketInfo
       if (!eventToCreate.ticketInfo) {
         eventToCreate.ticketInfo = {
           availableTickets: 0,
@@ -508,24 +536,28 @@ router.post(
         };
       }
 
-      // Extract tickets
+      // ✅ Extract tickets before creating event
       const ticketsToCreate = eventToCreate.tickets || [];
       delete eventToCreate.tickets;
-      delete eventToCreate.suppliers;
 
       // Create event
       const event = await Event.create(eventToCreate);
 
-      // Create tickets
+      // ✅ Create tickets (support both simple and detailed structure)
       if (ticketsToCreate.length > 0) {
         const ticketDocs = ticketsToCreate.map((ticket) => {
           const priceAmount =
-            typeof ticket.price === "number" ? ticket.price : ticket.price.amount;
+            typeof ticket.price === "number"
+              ? ticket.price
+              : ticket.price.amount;
           const currency =
             ticket.currency ||
             (typeof ticket.price === "object" ? ticket.price.currency : "ILS");
+
           const quantity =
-            typeof ticket.quantity === "number" ? ticket.quantity : ticket.quantity.total;
+            typeof ticket.quantity === "number"
+              ? ticket.quantity
+              : ticket.quantity.total;
 
           return {
             eventId: event._id,
@@ -534,30 +566,46 @@ router.post(
             description: ticket.description || "",
             type: ticket.type,
             price: { amount: priceAmount, currency },
-            quantity: { total: quantity, available: quantity, sold: 0, reserved: 0 },
+            quantity: {
+              total: quantity,
+              available: quantity,
+              sold: 0,
+              reserved: 0,
+            },
             status: "active",
-            validity: { startDate: event.startDate, endDate: event.endDate, isActive: true },
+            validity: {
+              startDate: event.startDate,
+              endDate: event.endDate,
+              isActive: true,
+            },
             sales: { startDate: event.startDate, endDate: event.endDate },
-            restrictions: { maxPerPerson: 10 },
+            restrictions:
+              ticket.restrictions || { maxPerPerson: 10 },
             refundPolicy: { allowed: true, deadline: 7, fee: 0 },
           };
         });
         await Ticket.insertMany(ticketDocs);
       }
 
-      // Add suppliers
-      for (const supplier of transformedSuppliers) {
+      // ✅ Add suppliers to event
+      for (const supplier of value.suppliers) {
         const details = {
           requestedPrice: supplier.requestedPrice,
           notes: supplier.notes,
           priority: supplier.priority,
         };
-        if (supplier.selectedPackageId) details.selectedPackageId = supplier.selectedPackageId;
-        if (supplier.packageDetails) details.packageDetails = supplier.packageDetails;
-        await event.addSupplierWithDetails(supplier.supplierId, supplier.serviceId, details);
+        if (supplier.selectedPackageId)
+          details.selectedPackageId = supplier.selectedPackageId;
+        if (supplier.packageDetails)
+          details.packageDetails = supplier.packageDetails;
+        await event.addSupplierWithDetails(
+          supplier.supplierId,
+          supplier.serviceId,
+          details
+        );
       }
 
-      // Populate event
+      // ✅ Populate event for response
       const populatedEvent = await Event.findById(event._id)
         .populate("producerId", "name companyName profileImage email phone")
         .populate(
@@ -570,7 +618,7 @@ router.post(
         )
         .populate("tickets");
 
-      // Emails
+      // ✅ Send emails
       try {
         await emailService.sendEventCreatedEmail(req.user, populatedEvent);
       } catch (err) {
@@ -598,17 +646,21 @@ router.post(
       res.status(201).json({
         success: true,
         data: populatedEvent,
-        message: "Event created successfully with suppliers and services",
+        message:
+          "Event created successfully with suppliers, services, tickets, and optional bank details",
       });
     } catch (err) {
       console.error("Create event error:", err);
       res
         .status(500)
-        .json({ success: false, message: "Error creating event", error: err.message });
+        .json({
+          success: false,
+          message: "Error creating event",
+          error: err.message,
+        });
     }
   }
 );
-
 
 // @desc    Add multiple suppliers with multiple services to existing event
 // @route   POST /api/events/:id/suppliers
@@ -2286,7 +2338,11 @@ router.put("/:id", protect, authorize("producer"), async (req, res) => {
       const ticketDocuments = ticketsToUpdate.map((ticket) => {
         // Handle both simplified and nested formats
         const priceAmount =
-          typeof ticket.price === "number" ? ticket.price : ticket.price.amount;
+          typeof ticket.price === "number"
+            ? ticket.price
+            : ticket.price && typeof ticket.price.amount === "number"
+            ? ticket.price.amount
+            : 0; // Default to 0 for free tickets
         const currency =
           ticket.currency ||
           (typeof ticket.price === "object" ? ticket.price.currency : null) ||
@@ -2410,7 +2466,7 @@ router.put("/:id", protect, authorize("producer"), async (req, res) => {
           console.log(`Successfully added supplier ${supplier.supplierId}`);
         } catch (err) {
           // If supplier already exists, it's okay - just skip
-          if (err.message.includes("already added")) {
+          if (err.message.includes("already added") || err.message.includes("already selected")) {
             console.log(
               `Supplier ${supplier.supplierId} with service ${supplier.serviceId} already exists, skipping...`
             );

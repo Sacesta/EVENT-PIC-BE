@@ -3,8 +3,45 @@ const Joi = require('joi');
 const User = require('../models/User');
 const Event = require('../models/Event');
 const { protect, authorize } = require('../middleware/auth');
+const multer = require('multer');
+const path = require('path');
+const fs = require('fs');
 
 const router = express.Router();
+
+// Create uploads folder if it doesn't exist
+const profileUploadPath = path.join(__dirname, '../uploads/Profile');
+if (!fs.existsSync(profileUploadPath)) {
+  fs.mkdirSync(profileUploadPath, { recursive: true });
+}
+
+// Multer storage configuration for profile images
+const profileStorage = multer.diskStorage({
+  destination: (req, file, cb) => {
+    cb(null, profileUploadPath);
+  },
+  filename: (req, file, cb) => {
+    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1e9);
+    cb(null, uniqueSuffix + path.extname(file.originalname));
+  },
+});
+
+// File filter for images only
+const imageFilter = (req, file, cb) => {
+  if (file.mimetype.startsWith('image/')) {
+    cb(null, true);
+  } else {
+    cb(new Error('Only image files are allowed!'), false);
+  }
+};
+
+const uploadProfileImage = multer({
+  storage: profileStorage,
+  fileFilter: imageFilter,
+  limits: {
+    fileSize: 5 * 1024 * 1024, // 5MB limit
+  },
+});
 
 // Validation schemas
 const updateProfileSchema = Joi.object({
@@ -84,6 +121,46 @@ router.put('/me', protect, async (req, res) => {
     res.status(500).json({
       success: false,
       message: 'Error updating profile',
+      error: error.message
+    });
+  }
+});
+
+// @desc    Upload profile image
+// @route   POST /api/users/me/profile-image
+// @access  Private
+router.post('/me/profile-image', protect, uploadProfileImage.single('profileImage'), async (req, res) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({
+        success: false,
+        message: 'No image file provided'
+      });
+    }
+
+    // Create the image path
+    const imagePath = `/uploads/Profile/${req.file.filename}`;
+
+    // Update user's profile image
+    const updatedUser = await User.findByIdAndUpdate(
+      req.user._id,
+      { profileImage: imagePath },
+      { new: true, runValidators: true }
+    ).select('-password');
+
+    res.json({
+      success: true,
+      message: 'Profile image uploaded successfully',
+      data: {
+        profileImage: imagePath,
+        user: updatedUser
+      }
+    });
+  } catch (error) {
+    console.error('Profile image upload error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error uploading profile image',
       error: error.message
     });
   }
