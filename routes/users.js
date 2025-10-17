@@ -1,3 +1,4 @@
+
 const express = require('express');
 const Joi = require('joi');
 const User = require('../models/User');
@@ -59,7 +60,9 @@ const updateProfileSchema = Joi.object({
     companyName: Joi.string().optional(),
     businessLicense: Joi.string().optional(),
     categories: Joi.array().items(Joi.string()).optional(),
-    experience: Joi.string().valid('beginner', 'intermediate', 'expert').optional()
+    experience: Joi.string().valid('beginner', 'intermediate', 'expert').optional(),
+    website: Joi.string().optional(),
+    instagramLink: Joi.string().optional()
   }).optional()
 });
 
@@ -74,10 +77,19 @@ const updatePasswordSchema = Joi.object({
 router.get('/me', protect, async (req, res) => {
   try {
     const user = await User.findById(req.user._id).select('-password');
-    
+
+    // Prepare response data
+    const responseData = user.toObject();
+
+    // For suppliers, include websiteLink and instagramLink at root level
+    if (user.role === 'supplier' && user.supplierDetails) {
+      responseData.websiteLink = user.supplierDetails.website || null;
+      responseData.instagramLink = user.supplierDetails.instagramLink || null;
+    }
+
     res.json({
       success: true,
-      data: user
+      data: responseData
     });
   } catch (error) {
     console.error('Get profile error:', error);
@@ -208,6 +220,133 @@ router.put('/me/password', protect, async (req, res) => {
     res.status(500).json({
       success: false,
       message: 'Error updating password',
+      error: error.message
+    });
+  }
+});
+
+
+
+
+router.put('/profile', protect, async (req, res) => {
+  try {
+    const userId = req.user._id;
+    const {
+      name,
+      phone,
+      language,
+      settings,
+      producerDetails,
+      supplierDetails,
+      websiteLink,
+      instagramLink
+    } = req.body;
+
+    // Build update object with only allowed fields
+    const updateData = {};
+
+    // Basic fields
+    if (name !== undefined) {
+      if (name.trim().length === 0) {
+        return res.status(400).json({
+          success: false,
+          message: 'Name cannot be empty'
+        });
+      }
+      updateData.name = name.trim();
+    }
+
+    if (phone !== undefined) {
+      updateData.phone = phone.trim();
+    }
+
+    if (language !== undefined && ['he', 'en', 'ar'].includes(language)) {
+      updateData.language = language;
+    }
+
+    // Settings
+    if (settings !== undefined && typeof settings === 'object') {
+      updateData.settings = {
+        ...req.user.settings,
+        ...settings
+      };
+    }
+
+    // Role-specific details
+    if (req.user.role === 'producer' && producerDetails !== undefined) {
+      updateData.producerDetails = {
+        ...req.user.producerDetails,
+        description: producerDetails.description?.trim(),
+        companyName: producerDetails.companyName?.trim(),
+        experience: producerDetails.experience,
+        specializations: producerDetails.specializations
+      };
+    }
+
+    if (req.user.role === 'supplier') {
+      updateData.supplierDetails = {
+        ...req.user.supplierDetails,
+        description: supplierDetails?.description?.trim(),
+        companyName: supplierDetails?.companyName?.trim(),
+        experience: supplierDetails?.experience,
+        location: supplierDetails?.location
+      };
+
+      // Handle website and instagramLink from root level or supplierDetails
+      if (websiteLink !== undefined) {
+        updateData.supplierDetails.website = websiteLink.trim();
+      } else if (supplierDetails?.website !== undefined) {
+        updateData.supplierDetails.website = supplierDetails.website.trim();
+      }
+
+      if (instagramLink !== undefined) {
+        updateData.supplierDetails.instagramLink = instagramLink.trim();
+      } else if (supplierDetails?.instagramLink !== undefined) {
+        updateData.supplierDetails.instagramLink = supplierDetails.instagramLink.trim();
+      }
+    }
+
+    // Update user
+    const updatedUser = await User.findByIdAndUpdate(
+      userId,
+      updateData,
+      {
+        new: true,
+        runValidators: true
+      }
+    ).select('-password -emailVerificationToken -emailVerificationExpires -passwordResetToken -passwordResetExpires');
+
+    if (!updatedUser) {
+      return res.status(404).json({
+        success: false,
+        message: 'User not found'
+      });
+    }
+
+    res.status(200).json({
+      success: true,
+      message: 'Profile updated successfully',
+      data: {
+        user: updatedUser
+      }
+    });
+
+  } catch (error) {
+    console.error('Profile update error:', error);
+
+    // Handle validation errors
+    if (error.name === 'ValidationError') {
+      const messages = Object.values(error.errors).map(err => err.message);
+      return res.status(400).json({
+        success: false,
+        message: 'Validation error',
+        errors: messages
+      });
+    }
+
+    res.status(500).json({
+      success: false,
+      message: 'Error updating profile',
       error: error.message
     });
   }

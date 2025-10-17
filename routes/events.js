@@ -205,7 +205,7 @@ const createEventSchema = Joi.object({
     branch: Joi.string().max(100).required(),
     accountNumber: Joi.string().max(50).required(),
     accountHolderName: Joi.string().max(100).required(),
-  }).optional(),
+  }).required(),
 
   tags: Joi.array().items(Joi.string()).optional(),
   featured: Joi.boolean().default(false),
@@ -372,7 +372,7 @@ const updateEventSchema = Joi.object({
     branch: Joi.string().max(100).required(),
     accountNumber: Joi.string().max(50).required(),
     accountHolderName: Joi.string().max(100).required(),
-  }).optional(),
+  }).required(),
 
 
   tags: Joi.array().items(Joi.string()).optional(),

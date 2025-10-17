@@ -1276,10 +1276,12 @@ router.put(
       // Validate package input
       console.log("body------>", req.body);
       const { error, value } = packageSchema.validate(req.body);
+
+      console.log("error : ",error)
       if (error) {
         return res.status(400).json({
           success: false,
-          message: "Validation error",
+          message: error.details.map((detail) => detail.message),
           errors: error.details.map((detail) => detail.message),
         });
       }

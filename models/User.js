@@ -119,6 +119,7 @@ const userSchema = new mongoose.Schema({
       country: String
     },
     website: String,
+    instagramLink: String,
     portfolio: [String],
     rating: {
       average: {
